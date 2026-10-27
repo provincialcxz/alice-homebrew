@@ -6,7 +6,9 @@ package main
 
 import (
 	"alicehomebrew/plugins/internal/sharedaudio"
+	"alicehomebrew/sdk/quasar"
 	"bufio"
+	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -33,6 +35,9 @@ type configuration struct {
 	InitialVolume float64 `json:"initial-volume"`
 	Normalise     bool    `json:"normalisation"`
 	Port          int     `json:"port"`
+	// DuckVolume is the music level, in percent, while Alice listens or
+	// answers; 100 turns ducking off.
+	DuckVolume float64 `json:"duck-volume"`
 }
 
 // arguments builds the librespot command line. Audio always leaves through the
@@ -47,8 +52,8 @@ func arguments(c configuration, root string) ([]string, error) {
 	default:
 		return nil, errors.New("bitrate must be 96, 160 or 320")
 	}
-	if c.InitialVolume < 0 || c.InitialVolume > 100 || c.Port < 1024 || c.Port > 65535 {
-		return nil, errors.New("invalid initial volume or port")
+	if c.InitialVolume < 0 || c.InitialVolume > 100 || c.DuckVolume < 0 || c.DuckVolume > 100 || c.Port < 1024 || c.Port > 65535 {
+		return nil, errors.New("invalid volume or port")
 	}
 	args := []string{
 		"--name", c.Name,
@@ -69,6 +74,24 @@ func arguments(c configuration, root string) ([]string, error) {
 		args = append(args, "--enable-volume-normalisation")
 	}
 	return args, nil
+}
+
+// duckFor lowers the music while Alice is busy and restores it afterwards,
+// including when her event socket disappears.
+func duckFor(shared interface{ SetDuck(float64) }, volume float64) func(quasar.State) {
+	busy := false
+	return func(s quasar.State) {
+		if s.Active() == busy {
+			return
+		}
+		busy = s.Active()
+		if busy {
+			shared.SetDuck(1 - volume/100)
+			log.Print("Alice is active: music ducked")
+		} else {
+			shared.SetDuck(0)
+		}
+	}
 }
 
 var accountName = regexp.MustCompile(`(Authenticated as) '[^']*'`)
@@ -125,6 +148,11 @@ func run() error {
 		return e
 	}
 	defer shared.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if c.DuckVolume < 100 {
+		go quasar.Watch(ctx, quasar.Address, duckFor(shared, c.DuckVolume))
+	}
 	cmd := exec.Command(binary, args...)
 	cmd.Stdout = shared
 	stderr, e := cmd.StderrPipe()

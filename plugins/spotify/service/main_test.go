@@ -3,6 +3,7 @@
 package main
 
 import (
+	"alicehomebrew/sdk/quasar"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -39,6 +40,7 @@ func TestArguments(t *testing.T) {
 		{Name: "ok", Bitrate: "128", Port: 4070},
 		{Name: "ok", Bitrate: "160", Port: 80},
 		{Name: "ok", Bitrate: "160", Port: 4070, InitialVolume: 101},
+		{Name: "ok", Bitrate: "160", Port: 4070, DuckVolume: -1},
 	} {
 		if _, e := arguments(bad, "/x"); e == nil {
 			t.Fatal("accepted", bad)
@@ -53,5 +55,21 @@ func TestRedactAccountName(t *testing.T) {
 	}
 	if redact("Using pipe sink") != "Using pipe sink" {
 		t.Fatal("unrelated line changed")
+	}
+}
+
+type duckRecorder []float64
+
+func (d *duckRecorder) SetDuck(v float64) { *d = append(*d, v) }
+
+func TestDuckFollowsAlice(t *testing.T) {
+	var got duckRecorder
+	on := duckFor(&got, 20)
+	for _, s := range []quasar.State{quasar.Idle, quasar.Listening, quasar.Busy, quasar.Speaking, quasar.Idle, quasar.Speaking, quasar.Unknown} {
+		on(s)
+	}
+	// One fade per change of activity; a lost socket (Unknown) restores music.
+	if len(got) != 4 || got[0] != 0.8 || got[1] != 0 || got[2] != 0.8 || got[3] != 0 {
+		t.Fatal(got)
 	}
 }

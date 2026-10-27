@@ -1,6 +1,7 @@
 package homebrew
 
 import (
+	"alicehomebrew/sdk/quasar"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -58,6 +60,7 @@ type Manager struct {
 	Ring            *Ring
 	Audio           *AudioMeter
 	Inputs          *Inputs
+	alice           atomic.Int32 // quasar.State, -1 unknown
 	catalog         *Catalog
 	CatalogError    string
 	AllowLocalStore bool
@@ -80,6 +83,7 @@ func NewManager(dir string, hardware, allowLocal bool) (*Manager, error) {
 	m := &Manager{dir: dir, Ring: ring, running: map[string]PluginRunner{}, tickets: map[string]ticket{}, AllowLocalStore: allowLocal, catalogs: map[string]*Catalog{}, diskProbe: diskUsage}
 	m.Audio = &AudioMeter{}
 	m.Inputs = NewInputs()
+	m.alice.Store(int32(quasar.Unknown))
 	m.state.Plugins = map[string]*Installed{}
 	b, e := os.ReadFile(filepath.Join(dir, "state.json"))
 	if e == nil {
@@ -312,7 +316,7 @@ func (m *Manager) start(id string) error {
 	if pkg.Manifest.Engine == "native" {
 		r, e = NewNativeRunner(pkg, config, m.dir)
 	} else {
-		r, e = NewRunner(pkg, config, RunnerEnv{Inputs: m.Inputs, Audio: m.Audio})
+		r, e = NewRunner(pkg, config, RunnerEnv{Inputs: m.Inputs, Audio: m.Audio, AliceState: m.alice.Load})
 	}
 	if e != nil {
 		return e
@@ -527,6 +531,7 @@ func (m *Manager) Snapshot() map[string]any {
 func (m *Manager) Run(ctx context.Context) {
 	go m.Audio.Serve(ctx)
 	go m.Inputs.Listen(ctx)
+	go quasar.Watch(ctx, quasar.Address, func(s quasar.State) { m.alice.Store(int32(s)) })
 	m.mu.Lock()
 	for id, p := range m.state.Plugins {
 		if p.Enabled {

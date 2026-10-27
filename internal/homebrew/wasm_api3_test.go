@@ -13,15 +13,20 @@ import (
 )
 
 // hostCallWasm imports alice.<name> and, on every tick, stores its result at
-// address 0. Functions taking a pointer receive address 16.
-func hostCallWasm(name string, pointer bool) []byte {
+// address 0. Signatures: "ptr" is (i32) -> i32 called with address 16, "f64"
+// is () -> f64 and "i32" is () -> i32.
+func hostCallWasm(name, signature string) []byte {
 	b := []byte{0, 97, 115, 109, 1, 0, 0, 0}
-	imported := []byte{0x60, 1, 0x7f, 1, 0x7f} // (i32) -> i32
-	store := []byte{0x36, 2, 0}                // i32.store
+	imported := []byte{0x60, 1, 0x7f, 1, 0x7f}
+	store := []byte{0x36, 2, 0} // i32.store
 	call := []byte{0x41, 0, 0x41, 16, 0x10, 0}
-	if !pointer {
-		imported = []byte{0x60, 0, 1, 0x7c} // () -> f64
-		store = []byte{0x39, 3, 0}          // f64.store
+	switch signature {
+	case "f64":
+		imported = []byte{0x60, 0, 1, 0x7c}
+		store = []byte{0x39, 3, 0} // f64.store
+		call = []byte{0x41, 0, 0x10, 0}
+	case "i32":
+		imported = []byte{0x60, 0, 1, 0x7f}
 		call = []byte{0x41, 0, 0x10, 0}
 	}
 	types := append([]byte{2}, imported...)
@@ -47,12 +52,12 @@ func hostCallWasm(name string, pointer bool) []byte {
 	return append(b, section(10, code)...)
 }
 
-func api3Runner(t *testing.T, name string, pointer bool, permissions []string, env RunnerEnv) *Runner {
+func api3Runner(t *testing.T, name, signature string, permissions []string, env RunnerEnv) *Runner {
 	t.Helper()
 	m := manifest("1.0.0")
 	m.API = 3
 	m.Permissions = permissions
-	p, e := Parse(packageBytes(t, m, hostCallWasm(name, pointer), ""))
+	p, e := Parse(packageBytes(t, m, hostCallWasm(name, signature), ""))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -76,10 +81,9 @@ func memory(t *testing.T, r *Runner, offset, n uint32) []byte {
 func TestAPI3PermissionsAreRequired(t *testing.T) {
 	env := RunnerEnv{Inputs: NewInputs(), Audio: &AudioMeter{}}
 	for _, c := range []struct {
-		name, permission string
-		pointer          bool
-	}{{"button_event", "input.buttons", true}, {"proximity", "sensor.proximity", false}, {"audio_levels", "audio.levels", true}} {
-		r := api3Runner(t, c.name, c.pointer, []string{}, env)
+		name, permission, signature string
+	}{{"button_event", "input.buttons", "ptr"}, {"proximity", "sensor.proximity", "f64"}, {"audio_levels", "audio.levels", "ptr"}, {"alice_state", "assistant.state", "i32"}} {
+		r := api3Runner(t, c.name, c.signature, []string{}, env)
 		if _, e := r.Tick(nil, 0); e == nil || !strings.Contains(e.Error(), "permission denied: "+c.permission) {
 			t.Fatalf("%s ran without %s: %v", c.name, c.permission, e)
 		}
@@ -88,7 +92,7 @@ func TestAPI3PermissionsAreRequired(t *testing.T) {
 
 func TestButtonEventsAreQueuedPerPlugin(t *testing.T) {
 	inputs := NewInputs()
-	r := api3Runner(t, "button_event", true, []string{"input.buttons"}, RunnerEnv{Inputs: inputs})
+	r := api3Runner(t, "button_event", "ptr", []string{"input.buttons"}, RunnerEnv{Inputs: inputs})
 	if _, e := r.Tick(nil, 0); e != nil {
 		t.Fatal(e)
 	}
@@ -124,7 +128,7 @@ func TestButtonEventsAreQueuedPerPlugin(t *testing.T) {
 func TestProximityAndAudioLevels(t *testing.T) {
 	inputs, audio := NewInputs(), &AudioMeter{}
 	env := RunnerEnv{Inputs: inputs, Audio: audio}
-	prox := api3Runner(t, "proximity", false, []string{"sensor.proximity"}, env)
+	prox := api3Runner(t, "proximity", "f64", []string{"sensor.proximity"}, env)
 	prox.Tick(nil, 0)
 	if math.Float64frombits(binary.LittleEndian.Uint64(memory(t, prox, 0, 8))) != -1 {
 		t.Fatal("missing sensor not reported as -1")
@@ -135,7 +139,7 @@ func TestProximityAndAudioLevels(t *testing.T) {
 		t.Fatal("distance not passed through")
 	}
 
-	levels := api3Runner(t, "audio_levels", true, []string{"audio.levels"}, env)
+	levels := api3Runner(t, "audio_levels", "ptr", []string{"audio.levels"}, env)
 	audio.levels = AudioLevels{RMS: 0.25, Peak: 0.5, Updated: time.Now()}
 	audio.levels.Bands[11] = 0.75
 	if _, e := levels.Tick(nil, 0); e != nil {
@@ -155,7 +159,7 @@ func TestProximityAndAudioLevels(t *testing.T) {
 }
 
 func TestUTCTimeAndRandom(t *testing.T) {
-	r := api3Runner(t, "utc_time", true, []string{}, RunnerEnv{})
+	r := api3Runner(t, "utc_time", "ptr", []string{}, RunnerEnv{})
 	r.now = func() time.Time { return time.Date(2026, 10, 27, 23, 30, 15, 0, time.FixedZone("MSK", 3*3600)) }
 	if _, e := r.Tick(nil, 0); e != nil {
 		t.Fatal(e)
@@ -170,7 +174,7 @@ func TestUTCTimeAndRandom(t *testing.T) {
 		t.Fatal("unsynced clock reported as valid")
 	}
 	m := manifest("1.0.0") // API 1
-	p, e := Parse(packageBytes(t, m, hostCallWasm("utc_time", true), ""))
+	p, e := Parse(packageBytes(t, m, hostCallWasm("utc_time", "ptr"), ""))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -209,7 +213,7 @@ func api3Package(t *testing.T) *Package {
 	t.Helper()
 	m := manifest("1.0.0")
 	m.ID, m.API, m.Permissions = "alice.sensors", 3, []string{"input.buttons"}
-	p, e := Parse(packageBytes(t, m, hostCallWasm("button_event", true), ""))
+	p, e := Parse(packageBytes(t, m, hostCallWasm("button_event", "ptr"), ""))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -266,5 +270,19 @@ func TestCatalogV3IsPreferredAndOlderCatalogsHideAPI3(t *testing.T) {
 			t.Fatal("v3 preference", publishV3, m.catalog)
 		}
 		server.Close()
+	}
+}
+
+func TestAliceState(t *testing.T) {
+	state := int32(-1)
+	r := api3Runner(t, "alice_state", "i32", []string{"assistant.state"}, RunnerEnv{AliceState: func() int32 { return state }})
+	for _, want := range []int32{-1, 2, 0} {
+		state = want
+		if _, e := r.Tick(nil, 0); e != nil {
+			t.Fatal(e)
+		}
+		if got := int32(binary.LittleEndian.Uint32(memory(t, r, 0, 4))); got != want {
+			t.Fatal("alice_state", got, want)
+		}
 	}
 }

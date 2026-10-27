@@ -1,9 +1,9 @@
 name: Build Spotify Connect plugin
 on:
   push:
-    paths: ['plugins/spotify/**', 'plugins/internal/**', '.github/workflows/spotify.yml']
+    paths: ['plugins/spotify/**', 'plugins/internal/**', 'sdk/quasar/**', '.github/workflows/spotify.yml']
   pull_request:
-    paths: ['plugins/spotify/**', 'plugins/internal/**', '.github/workflows/spotify.yml']
+    paths: ['plugins/spotify/**', 'plugins/internal/**', 'sdk/quasar/**', '.github/workflows/spotify.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -22,7 +22,7 @@ jobs:
           cargo install cargo-zigbuild --version 0.23.4 --locked
       - name: Build librespot for aarch64 musl
         run: bash plugins/spotify/build-receiver.sh
-      - run: go test -tags spotify ./plugins/spotify/... ./plugins/internal/...
+      - run: go test -tags spotify ./plugins/spotify/... ./plugins/internal/... ./sdk/quasar/...
       - name: Package and validate the plugin
         run: |
           python3 plugins/spotify/build-plugin.py

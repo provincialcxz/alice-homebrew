@@ -34,6 +34,8 @@ type Runner struct {
 type RunnerEnv struct {
 	Inputs *Inputs
 	Audio  *AudioMeter
+	// AliceState returns quasar.State as an int, -1 when unknown.
+	AliceState func() int32
 }
 type PluginRunner interface {
 	Tick(map[string]any, uint32) ([]byte, error)
@@ -172,6 +174,14 @@ func NewRunner(p *Package, config map[string]any, env RunnerEnv) (*Runner, error
 		}
 		return 0
 	}).Export("audio_levels")
+	// alice_state() returns 0 idle, 1 listening, 2 speaking, 3 thinking,
+	// 5 recognizing music, 6 none, or -1 while the state is unknown.
+	host.NewFunctionBuilder().WithFunc(func(context.Context, api.Module) int32 {
+		if !r.allowed("assistant.state") || r.env.AliceState == nil {
+			return -1
+		}
+		return r.env.AliceState()
+	}).Export("alice_state")
 	// utc_time(out) writes 8 bytes of UTC: year u16, month, day, hour, minute,
 	// second, weekday (0 Sunday). The speaker's time zone setting is unknown,
 	// so plugins apply their own offset. Returns 0 while the clock is unsynced.

@@ -23,8 +23,9 @@ const MaxNativeModule = 24 << 20
 const APIVersion = 3
 
 // API 3 WASM permissions read speaker inputs without full root. They never
-// expose the microphone: audio.levels only summarizes what is being played.
-var sensorPermissions = map[string]bool{"input.buttons": true, "sensor.proximity": true, "audio.levels": true}
+// expose the microphone: audio.levels only summarizes what is being played,
+// and assistant.state is whether Alice is listening or speaking, never words.
+var sensorPermissions = map[string]bool{"input.buttons": true, "sensor.proximity": true, "audio.levels": true, "assistant.state": true}
 
 var idRE = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$`)
 var versionRE = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$`)

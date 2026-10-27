@@ -46,6 +46,11 @@ typedef struct {
 } alice_audio_levels;
 ALICE_IMPORT("audio_levels") extern u32 alice_audio_levels_read(alice_audio_levels *out);
 
+/* API 3, assistant.state: Alice's activity, never what was said.
+ * 0 idle, 1 listening, 2 speaking, 3 thinking, 5 recognizing music, 6 none,
+ * -1 while unknown (for example before her event socket is reachable). */
+ALICE_IMPORT("alice_state") extern int alice_state(void);
+
 /* API 3, no permission: current UTC time. The speaker's time zone setting is
  * unknown, so add your own offset (for example from a config field). Returns 0
  * while the clock is not synced yet (year before 2024). */

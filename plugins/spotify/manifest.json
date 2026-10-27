@@ -90,6 +90,18 @@
       "default": false
     },
     {
+      "key": "duck-volume",
+      "label": {
+        "ru": "Громкость музыки, пока говорит Алиса, % (100 — не приглушать)",
+        "en": "Music volume while Alice talks, % (100 = no ducking)"
+      },
+      "type": "range",
+      "default": 20,
+      "min": 0,
+      "max": 100,
+      "step": 5
+    },
+    {
       "key": "port",
       "label": {
         "ru": "Порт обнаружения",

@@ -102,6 +102,7 @@ type Playback struct {
 	once   sync.Once
 	meter  *pcmMeter
 	closed bool
+	duck   ducker
 }
 
 func (p *Playback) Write(b []byte) (int, error) {
@@ -120,12 +121,17 @@ func (p *Playback) Write(b []byte) (int, error) {
 			return 0, err
 		}
 	}
-	n, err := p.sink.Write(b)
-	p.last = time.Now()
 	if p.meter != nil {
-		p.meter.add(b[:n])
+		p.meter.add(b) // levels describe the music, not the ducked output
 	}
-	return n, err
+	p.last = time.Now()
+	if p.duck.idle() {
+		return p.sink.Write(b)
+	}
+	if _, err := p.sink.Write(p.duck.apply(b)); err != nil {
+		return 0, err
+	}
+	return len(b), nil
 }
 
 func (p *Playback) releaseIdle(now time.Time) {
