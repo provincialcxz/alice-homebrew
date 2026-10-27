@@ -494,6 +494,13 @@ func (s *Server) stationRequest(w http.ResponseWriter, r *http.Request) error {
 	case r.URL.Path == "/api/hardware" && r.Method == "GET":
 		jsonResponse(w, HardwareInventory())
 		return nil
+	case r.URL.Path == "/api/inputs" && r.Method == "GET":
+		status := m.Inputs.Status()
+		if m.Button != nil {
+			status["button_confirm"] = m.Button.Status()
+		}
+		jsonResponse(w, status)
+		return nil
 	case r.URL.Path == "/api/system" && r.Method == "GET":
 		jsonResponse(w, m.System())
 		return nil

@@ -2,6 +2,7 @@ package homebrew
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,31 @@ import (
 	"sync"
 	"testing"
 )
+
+func TestInputsDiagnostics(t *testing.T) {
+	m := manager(t)
+	m.Inputs.key(115, 1)
+	m.Inputs.setProximity(80)
+	for i := 0; i < keyQueueSize+4; i++ {
+		m.Inputs.key(114, 0)
+	}
+	w := httptest.NewRecorder()
+	NewServer(m, nil, "").ServeHTTP(w, httptest.NewRequest("GET", "http://192.168.1.50:8088/api/inputs", nil))
+	var s struct {
+		Distance float64    `json:"distance"`
+		Recent   []KeyEvent `json:"recent"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &s) != nil || s.Distance != 80 || len(s.Recent) != keyQueueSize || s.Recent[0].Code != 114 {
+		t.Fatal("inputs diagnostics", w.Code, w.Body.String())
+	}
+	// Reading diagnostics never consumes events a plugin is waiting for.
+	id := m.Inputs.Subscribe()
+	m.Inputs.key(115, 1)
+	NewServer(m, nil, "").ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "http://192.168.1.50:8088/api/inputs", nil))
+	if ev, ok := m.Inputs.NextKey(id); !ok || ev.Code != 115 {
+		t.Fatal("diagnostics consumed a plugin event")
+	}
+}
 
 func TestSessionsSurviveRestartButNotACodeChange(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "sessions.json")

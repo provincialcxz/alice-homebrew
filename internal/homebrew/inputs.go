@@ -9,9 +9,9 @@ const keyQueueSize = 16
 
 // KeyEvent is one speaker button change: Value 1 is press, 0 release, 2 repeat.
 type KeyEvent struct {
-	Code   uint16
-	Value  uint8
-	Millis uint32
+	Code   uint16 `json:"code"`
+	Value  uint8  `json:"value"`
+	Millis uint32 `json:"ms"`
 }
 
 // Inputs shares the speaker keypad and proximity sensor between the button gate
@@ -24,6 +24,7 @@ type Inputs struct {
 	boot      time.Time
 	next      int
 	queues    map[int][]KeyEvent
+	recent    []KeyEvent // for the diagnostics page; never consumed
 	proximity float64
 	keypad    string
 	sensor    string
@@ -69,7 +70,7 @@ func (h *Inputs) Proximity() float64 {
 func (h *Inputs) Status() map[string]any {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return map[string]any{"keypad": h.keypad, "proximity": h.sensor, "distance": h.proximity}
+	return map[string]any{"keypad": h.keypad, "proximity": h.sensor, "distance": h.proximity, "uptime_ms": uint32(time.Since(h.boot).Milliseconds()), "recent": append([]KeyEvent{}, h.recent...)}
 }
 
 func (h *Inputs) key(code uint16, value int32) {
@@ -84,6 +85,10 @@ func (h *Inputs) key(code uint16, value int32) {
 		}
 		h.queues[id] = append(q, ev)
 	}
+	if len(h.recent) >= keyQueueSize {
+		h.recent = h.recent[1:]
+	}
+	h.recent = append(h.recent, ev)
 	gate := h.Gate
 	h.mu.Unlock()
 	if gate != nil && value == 1 {

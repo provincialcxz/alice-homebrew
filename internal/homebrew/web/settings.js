@@ -75,8 +75,19 @@ function settingsPage(c){
  c.append(list);
  const system=state.system||{},device=el('section','settings-box spaced');device.append(el('h2','',t('Устройство')));
  for(const [label,value]of [['Версия Homebrew',system.version||about.version],['Архитектура',`${system.os||''} / ${system.architecture||''}`],['Установлено плагинов',`${system.plugin_count||0} / ${system.max_plugins||8}`],['Запущено плагинов',`${system.running_count||0} / ${system.max_running||4}`]]){const row=el('div','device-row');row.append(el('span','',t(label)),el('strong','',String(value)));device.append(row)}
- device.append(el('p','caption',t(system.hardware_led?'Работает на колонке':'Предпросмотр на компьютере')),el('p','caption',t('Вход в менеджер не требуется.')));
- const guide=el('a','secondary guide-link',t('Гайд разработчика'));guide.href='https://github.com/hertebeznat-cell/alice-homebrew/blob/main/docs/PLUGIN_GUIDE.md';guide.target='_blank';guide.rel='noopener';device.append(guide);device.append(button(lang==='ru'?'Оборудование колонки':'Speaker hardware',async()=>{const hw=await api('/api/hardware');const d=$('confirm-content');d.replaceChildren(el('h2','',lang==='ru'?'Оборудование колонки':'Speaker hardware'),el('pre','',JSON.stringify(hw,null,2)),button('Отмена',()=>$('confirm').close(),'quiet'));openConfirm()},'secondary'));c.append(device);updateSystemMetrics();
+ device.append(el('p','caption',t(system.hardware_led?'Работает на колонке':'Предпросмотр на компьютере')),el('p','caption',t(about.access_code_required?'Вход по коду доступа включён.':'Вход в менеджер не требуется.')));
+ device.append(button('Диагностика кнопок и датчика',inputsDialog,'secondary'));
+ const guide=el('a','secondary guide-link',t('Гайд разработчика'));guide.href='https://github.com/provincialcxz/alice-homebrew/blob/main/docs/PLUGIN_GUIDE.md';guide.target='_blank';guide.rel='noopener';device.append(guide);device.append(button(lang==='ru'?'Оборудование колонки':'Speaker hardware',async()=>{const hw=await api('/api/hardware');const d=$('confirm-content');d.replaceChildren(el('h2','',lang==='ru'?'Оборудование колонки':'Speaker hardware'),el('pre','',JSON.stringify(hw,null,2)),button('Отмена',()=>$('confirm').close(),'quiet'));openConfirm()},'secondary'));c.append(device);updateSystemMetrics();
+}
+// Live view of what API 3 plugins receive: keypad presses and the proximity value.
+function inputsDialog(){
+ const d=$('confirm-content'),status=el('pre',''),events=el('pre','');
+ d.replaceChildren(el('h2','',t('Диагностика кнопок и датчика')),el('p','caption',t('Нажимайте кнопки и подносите ладонь к колонке. Значения обновляются сами.')),status,el('h3','',t('Последние нажатия')),events,button('Закрыть',()=>$('confirm').close(),'quiet'));
+ const names={0:t('отпущена'),1:t('нажата'),2:t('удерживается')};
+ const poll=async()=>{if(!$('confirm').open||!d.contains(status))return;try{const s=await api('/api/inputs');
+  status.textContent=`${t('Кнопки (adc_keypad)')}: ${s.keypad||'—'}\n${t('Датчик (STM VL53L0)')}: ${s.proximity||'—'}\n${t('Расстояние')}: ${s.distance<0?t('нет данных'):s.distance}`+(s.button_confirm?`\n${t('Подтверждение кнопкой')}: ${s.button_confirm.ready?t('готово'):s.button_confirm.error||'—'}${s.button_confirm.pending?' · '+t('ждёт')+': '+s.button_confirm.pending:''}`:'');
+  events.textContent=(s.recent||[]).slice().reverse().map(e=>`${((s.uptime_ms-e.ms)/1000).toFixed(1)} ${t('с назад')} · ${t('код')} ${e.code} · ${names[e.value]||e.value}`).join('\n')||t('Пока ни одного нажатия')}catch(e){status.textContent=e.message}setTimeout(poll,300)};
+ openConfirm();poll();
 }
 function sourceDialog(){
  const d=$('confirm-content');d.replaceChildren(el('h2','',t('Добавить источник')),el('p','',t('Ссылка на GitHub-репозиторий, сайт источника или catalog/v1.json. Ключ обычно определяется автоматически.')));
