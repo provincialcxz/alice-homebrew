@@ -11,6 +11,9 @@ import (
 // every package must be present, and it must not be close to expiring.
 func TestPublishedForkCatalog(t *testing.T) {
 	docs := filepath.Join("..", "..", "docs")
+	if _, e := os.Stat(filepath.Join(docs, "catalog")); os.IsNotExist(e) {
+		t.Skip("catalog site is not part of this copy (for example Station Mini Root's bundle)")
+	}
 	for _, name := range []string{"v1.json", "v2.json", "v3.json"} {
 		raw, e := os.ReadFile(filepath.Join(docs, "catalog", name))
 		if e != nil {
