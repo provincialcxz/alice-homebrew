@@ -85,7 +85,8 @@ function inputsDialog(){
  d.replaceChildren(el('h2','',t('Диагностика кнопок и датчика')),el('p','caption',t('Нажимайте кнопки и подносите ладонь к колонке. Значения обновляются сами.')),status,el('h3','',t('Последние нажатия')),events,button('Закрыть',()=>$('confirm').close(),'quiet'));
  const names={0:t('отпущена'),1:t('нажата'),2:t('удерживается')};
  const poll=async()=>{if(!$('confirm').open||!d.contains(status))return;try{const s=await api('/api/inputs');
-  status.textContent=`${t('Кнопки (adc_keypad)')}: ${s.keypad||'—'}\n${t('Датчик (STM VL53L0)')}: ${s.proximity||'—'}\n${t('Расстояние')}: ${s.distance<0?t('нет данных'):s.distance}`+(s.button_confirm?`\n${t('Подтверждение кнопкой')}: ${s.button_confirm.ready?t('готово'):s.button_confirm.error||'—'}${s.button_confirm.pending?' · '+t('ждёт')+': '+s.button_confirm.pending:''}`:'');
+  status.textContent=`${t('Кнопки (adc_keypad)')}: ${s.keypad||'—'}\n${t('Датчик (STM VL53L0)')}: ${s.proximity||'—'}\n${t('Расстояние')}: ${s.distance<0?t('нет данных'):s.distance}
+${t('Алиса')}: ${({'-1':t('нет связи с событиями'),0:t('тишина'),1:t('слушает'),2:t('говорит'),3:t('думает'),5:t('узнаёт музыку'),6:t('тишина')})[s.alice_state]??s.alice_state}`+(s.button_confirm?`\n${t('Подтверждение кнопкой')}: ${s.button_confirm.ready?t('готово'):s.button_confirm.error||'—'}${s.button_confirm.pending?' · '+t('ждёт')+': '+s.button_confirm.pending:''}`:'');
   events.textContent=(s.recent||[]).slice().reverse().map(e=>`${((s.uptime_ms-e.ms)/1000).toFixed(1)} ${t('с назад')} · ${t('код')} ${e.code} · ${names[e.value]||e.value}`).join('\n')||t('Пока ни одного нажатия')}catch(e){status.textContent=e.message}setTimeout(poll,300)};
  openConfirm();poll();
 }

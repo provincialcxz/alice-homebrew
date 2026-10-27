@@ -24,8 +24,9 @@ func TestInputsDiagnostics(t *testing.T) {
 	var s struct {
 		Distance float64    `json:"distance"`
 		Recent   []KeyEvent `json:"recent"`
+		Alice    int32      `json:"alice_state"`
 	}
-	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &s) != nil || s.Distance != 80 || len(s.Recent) != keyQueueSize || s.Recent[0].Code != 114 {
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &s) != nil || s.Distance != 80 || len(s.Recent) != keyQueueSize || s.Recent[0].Code != 114 || s.Alice != -1 {
 		t.Fatal("inputs diagnostics", w.Code, w.Body.String())
 	}
 	// Reading diagnostics never consumes events a plugin is waiting for.

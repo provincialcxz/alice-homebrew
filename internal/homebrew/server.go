@@ -496,6 +496,7 @@ func (s *Server) stationRequest(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	case r.URL.Path == "/api/inputs" && r.Method == "GET":
 		status := m.Inputs.Status()
+		status["alice_state"] = m.alice.Load()
 		if m.Button != nil {
 			status["button_confirm"] = m.Button.Status()
 		}
