@@ -21,6 +21,17 @@ import (
 	"time"
 )
 
+// nextVersion is the release the fixture offers: the current version with the
+// patch number raised. Build ALICE_UPDATE_TEST_NEXT with -ldflags
+// "-X alicehomebrew/internal/homebrew.Version=<this>".
+func nextVersion(t *testing.T) string {
+	v, e := parseStableVersion(Version)
+	if e != nil {
+		t.Fatal(e)
+	}
+	return fmt.Sprintf("%d.%d.%d", v[0], v[1], v[2]+1)
+}
+
 // Optional real-process fixture, built and run locally before publishing. No
 // speaker is involved; the only network is mocked GitHub and a loopback server.
 func TestManagerSelfUpdateIntegration(t *testing.T) {
@@ -29,7 +40,7 @@ func TestManagerSelfUpdateIntegration(t *testing.T) {
 	if oldBinary == "" || nextBinary == "" {
 		t.Skip("set old/next test binary paths to run real-process update fixture")
 	}
-	for _, tc := range []struct{ name, path, version, state string }{{"upgrade", nextBinary, "0.4.1", "updated"}, {"rollback", os.Getenv("ALICE_UPDATE_TEST_BAD"), Version, "rolled-back"}} {
+	for _, tc := range []struct{ name, path, version, state string }{{"upgrade", nextBinary, nextVersion(t), "updated"}, {"rollback", os.Getenv("ALICE_UPDATE_TEST_BAD"), Version, "rolled-back"}} {
 		if tc.path == "" {
 			continue
 		}
@@ -53,8 +64,11 @@ func runManagerUpdateFixture(t *testing.T, oldBinary, nextBinary, expectedVersio
 		t.Fatal(e)
 	}
 	m.stop(pkg.Manifest.ID)
-	if e = m.ChangeSource("official", false, false); e != nil {
-		t.Fatal(e)
+	// The launched service must not refresh real catalogs during the fixture.
+	for _, b := range builtinSources {
+		if e = m.ChangeSource(b.ID, false, false); e != nil {
+			t.Fatal(e)
+		}
 	}
 	root := t.TempDir()
 	target := filepath.Join(root, "alice-homebrew")
@@ -119,8 +133,9 @@ func runManagerUpdateFixture(t *testing.T, oldBinary, nextBinary, expectedVersio
 	if e != nil {
 		t.Fatal(e)
 	}
-	asset := releaseAsset{Name: "alice-homebrew-linux-" + runtime.GOARCH, URL: fmt.Sprintf("https://github.com/%s/releases/download/v0.4.1/alice-homebrew-linux-%s", updateRepository, runtime.GOARCH), Digest: "sha256:" + Digest(candidate), Size: int64(len(candidate)), State: "uploaded"}
-	release := managerRelease{Tag: "v0.4.1", Assets: []releaseAsset{asset}}
+	tag := "v" + nextVersion(t)
+	asset := releaseAsset{Name: "alice-homebrew-linux-" + runtime.GOARCH, URL: fmt.Sprintf("https://github.com/%s/releases/download/%s/alice-homebrew-linux-%s", updateRepository, tag, runtime.GOARCH), Digest: "sha256:" + Digest(candidate), Size: int64(len(candidate)), State: "uploaded"}
+	release := managerRelease{Tag: tag, Assets: []releaseAsset{asset}}
 	u, e := NewUpdater(m.dir, listen, false)
 	if e != nil {
 		t.Fatal(e)
