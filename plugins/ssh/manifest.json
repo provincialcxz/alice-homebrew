@@ -1,7 +1,7 @@
 {
   "format": 1,
   "id": "ssh",
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0-beta.2",
   "api": 2,
   "engine": "native",
   "title": {
@@ -60,15 +60,15 @@
         {
           "value": "0.0.0.0",
           "label": {
-            "ru": "Все IPv4-интерфейсы",
-            "en": "All IPv4 interfaces"
+            "ru": "Вся локальная сеть (вход только по ключу)",
+            "en": "Whole local network (key login only)"
           }
         },
         {
           "value": "127.0.0.1",
           "label": {
-            "ru": "Только сама колонка",
-            "en": "Speaker loopback only"
+            "ru": "Только сама колонка (через adb forward)",
+            "en": "Speaker loopback only (via adb forward)"
           }
         }
       ]

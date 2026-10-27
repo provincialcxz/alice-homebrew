@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -88,7 +89,9 @@ func run() error {
 			repo = os.Args[4]
 		}
 		e = s.Export(f, repo)
-		f.Close()
+		if ce := f.Close(); e == nil {
+			e = ce
+		}
 		if e != nil {
 			os.Remove(os.Args[3])
 		}
@@ -127,6 +130,13 @@ func run() error {
 		}
 	}
 	debug.SetMemoryLimit(64 << 20)
+	// Claim the port before any plugin starts: a busy port must not leave
+	// native plugins running without a manager that can stop them.
+	listener, e := net.Listen("tcp", *listen)
+	if e != nil {
+		return e
+	}
+	defer listener.Close()
 	var manager *homebrew.Manager
 	var store *homebrew.Store
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -154,6 +164,8 @@ func run() error {
 		}
 	}
 	handler := homebrew.NewServer(manager, store, token)
+	handler.SessionFile = filepath.Join(*data, "sessions.json")
+	handler.LoadSessions()
 	for _, h := range strings.Split(*allowedHosts, ",") {
 		if h = strings.TrimSpace(h); h != "" {
 			handler.AllowedHosts = append(handler.AllowedHosts, h)
@@ -170,12 +182,13 @@ func run() error {
 	if tokenPath != "" {
 		fmt.Printf("Access code is in %s\n", tokenPath)
 	}
-	e = server.ListenAndServe()
+	e = server.Serve(listener)
 	if e == http.ErrServerClosed {
-		if role == "station" {
-			<-managerDone
-		}
-		return nil
+		e = nil
+	}
+	if role == "station" {
+		cancel() // stop plugins even when serving failed
+		<-managerDone
 	}
 	return e
 }
@@ -188,6 +201,11 @@ func writeNew(path string, b []byte) error {
 		return e
 	}
 	_, e = f.Write(b)
-	f.Close()
+	if ce := f.Close(); e == nil {
+		e = ce
+	}
+	if e != nil {
+		os.Remove(path) // never leave a truncated package behind
+	}
 	return e
 }

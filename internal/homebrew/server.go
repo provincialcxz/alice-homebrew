@@ -37,10 +37,51 @@ type Server struct {
 	// AllowedHosts extends the Host names accepted besides IP literals,
 	// localhost and mDNS .local names (for example a router-provided name).
 	AllowedHosts []string
-	mu           sync.Mutex
-	attempts     map[string]loginAttempt
-	sessions     map[string]time.Time
-	uploads      chan struct{}
+	// SessionFile, when set, keeps logins across manager restarts and updates.
+	SessionFile string
+	mu          sync.Mutex
+	attempts    map[string]loginAttempt
+	// sessions maps SHA-256 of the cookie value to its expiry; the file never
+	// holds a usable cookie.
+	sessions map[string]time.Time
+	uploads  chan struct{}
+}
+
+type savedSessions struct {
+	// Token is the access code digest; changing the code drops every session.
+	Token    string               `json:"token"`
+	Sessions map[string]time.Time `json:"sessions"`
+}
+
+// LoadSessions reads SessionFile. A missing, unreadable or foreign file starts
+// with no sessions instead of failing the manager.
+func (s *Server) LoadSessions() {
+	if s.SessionFile == "" || s.Token == "" {
+		return
+	}
+	b, e := os.ReadFile(s.SessionFile)
+	if e != nil {
+		return
+	}
+	var saved savedSessions
+	if decode(b, &saved) != nil || saved.Token != Digest([]byte(s.Token)) {
+		return
+	}
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, until := range saved.Sessions {
+		if validHash(k) && now.Before(until) && len(s.sessions) < maxSessions {
+			s.sessions[k] = until
+		}
+	}
+}
+
+func (s *Server) saveSessionsLocked() {
+	if s.SessionFile == "" {
+		return
+	}
+	_ = atomicJSON(s.SessionFile, savedSessions{Token: Digest([]byte(s.Token)), Sessions: s.sessions})
 }
 
 func NewServer(manager *Manager, store *Store, token string) *Server {
@@ -74,14 +115,23 @@ func (s *Server) authed(r *http.Request) bool {
 	if e != nil {
 		return false
 	}
+	key := Digest([]byte(c.Value))
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	until, ok := s.sessions[c.Value]
+	until, ok := s.sessions[key]
 	if ok && time.Now().After(until) {
-		delete(s.sessions, c.Value)
+		delete(s.sessions, key)
+		s.saveSessionsLocked()
 		return false
 	}
 	return ok
+}
+
+func (s *Server) endSession(cookie string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, Digest([]byte(cookie)))
+	s.saveSessionsLocked()
 }
 
 // newSession issues a random cookie value so the access code itself never
@@ -105,7 +155,8 @@ func (s *Server) newSession() string {
 		}
 		delete(s.sessions, oldest)
 	}
-	s.sessions[id] = now.Add(s.sessionTTL())
+	s.sessions[Digest([]byte(id))] = now.Add(s.sessionTTL())
+	s.saveSessionsLocked()
 	return id
 }
 
@@ -327,9 +378,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/api/logout" && r.Method == "POST" {
 		if c, e := r.Cookie(s.cookie()); e == nil {
-			s.mu.Lock()
-			delete(s.sessions, c.Value)
-			s.mu.Unlock()
+			s.endSession(c.Value)
 		}
 		http.SetCookie(w, &http.Cookie{Name: s.cookie(), Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 		jsonResponse(w, map[string]bool{"ok": true})
@@ -413,6 +462,11 @@ func (s *Server) stationRequest(w http.ResponseWriter, r *http.Request) error {
 	case r.URL.Path == "/api/updates/check" && r.Method == "POST":
 		if m.Updater == nil {
 			return errors.New("updater unavailable")
+		}
+		// One check at a time; report the running one instead of claiming a new start.
+		if m.Updater.Busy() {
+			jsonResponse(w, map[string]any{"started": false, "status": m.Updater.Status()})
+			return nil
 		}
 		// The background request survives a browser navigating away mid-download.
 		go func() {

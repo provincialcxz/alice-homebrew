@@ -147,6 +147,11 @@ func (u *Updater) Status() UpdateStatus {
 	}
 	return u.status
 }
+func (u *Updater) Busy() bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.busy
+}
 func (u *Updater) SetEnabled(enabled bool) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()

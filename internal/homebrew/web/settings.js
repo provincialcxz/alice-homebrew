@@ -164,7 +164,7 @@ function managerUpdates(c){
  const row=el('div','button-row'),label=el('label','permission'),enabled=el('input');enabled.type='checkbox';enabled.id='manager-update-enabled';enabled.checked=!!state.updates.enabled;
  enabled.onchange=()=>action(async()=>{try{state.updates=await api('/api/updates/settings',{enabled:enabled.checked})}finally{updateManagerUpdates()}});
  label.append(enabled,document.createTextNode(updateWords('Автоматически устанавливать обновления','Automatically install updates')));
- const check=button(updateWords('Проверить сейчас','Check now'),async()=>{await api('/api/updates/check',{});toast(updateWords('Проверка обновлений запущена','Update check started'));state.updates=await api('/api/updates');updateManagerUpdates()},'secondary');check.id='manager-update-check';
+ const check=button(updateWords('Проверить сейчас','Check now'),async()=>{const started=(await api('/api/updates/check',{})).started;toast(started?updateWords('Проверка обновлений запущена','Update check started'):updateWords('Проверка уже идёт','A check is already running'));state.updates=await api('/api/updates');updateManagerUpdates()},'secondary');check.id='manager-update-check';
  row.append(label,check);box.append(row);
  const repo=el('a','caption',updateWords('Релизы на GitHub ↗','GitHub releases ↗'));repo.href='https://github.com/provincialcxz/alice-homebrew/releases';repo.target='_blank';repo.rel='noopener';box.append(repo);c.append(box);updateManagerUpdates();
 }

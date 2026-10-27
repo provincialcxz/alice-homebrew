@@ -37,13 +37,15 @@ type Store struct {
 	key     ed25519.PrivateKey
 	scanner string
 	slots   chan struct{}
+	// submitting reserves hashes while a submission is scanned outside mu.
+	submitting map[string]bool
 }
 
 func NewStore(dir, scanner string) (*Store, error) {
 	if e := os.MkdirAll(filepath.Join(dir, "packages"), 0700); e != nil {
 		return nil, e
 	}
-	s := &Store{dir: dir, scanner: scanner, slots: make(chan struct{}, 2), state: StoreState{Submissions: map[string]*Submission{}}}
+	s := &Store{dir: dir, scanner: scanner, slots: make(chan struct{}, 2), submitting: map[string]bool{}, state: StoreState{Submissions: map[string]*Submission{}}}
 	path := filepath.Join(dir, "catalog-signing.key")
 	key, e := os.ReadFile(path)
 	if os.IsNotExist(e) {
@@ -91,7 +93,11 @@ func (s *Store) Submit(ctx context.Context, raw []byte) (*Submission, error) {
 		return nil, e
 	}
 	s.mu.Lock()
-	pending := 0
+	pending := len(s.submitting)
+	if s.submitting[p.SHA256] {
+		s.mu.Unlock()
+		return nil, errors.New("this exact package was already submitted")
+	}
 	for _, v := range s.state.Submissions {
 		if v.SHA256 == p.SHA256 {
 			s.mu.Unlock()
@@ -109,10 +115,17 @@ func (s *Store) Submit(ctx context.Context, raw []byte) (*Submission, error) {
 		s.mu.Unlock()
 		return nil, e
 	}
+	s.submitting[p.SHA256] = true
 	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.submitting, p.SHA256)
+		s.mu.Unlock()
+	}()
 	v := &Submission{ID: randomID(), Manifest: p.Manifest, SHA256: p.SHA256, Bytes: len(raw), Status: "pending", Scan: "not_configured", Created: time.Now().UTC()}
 	if s.scanner != "" {
-		scanCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		// A client that disconnects must not turn a clean package into scanner_error.
+		scanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(scanCtx, s.scanner, "--no-summary", "--", filepath.Join(s.dir, "packages", p.SHA256+".aliceplugin"))
 		output, err := cmd.CombinedOutput()
