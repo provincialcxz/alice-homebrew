@@ -1,2 +1,4 @@
 /service/receiver-arm64
 /plugin.elf
+/licenses/rust/
+/licenses/rust-dependencies.txt

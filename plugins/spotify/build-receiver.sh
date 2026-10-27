@@ -25,20 +25,6 @@ cargo "+$TOOLCHAIN" zigbuild --release --locked --target "$TARGET" \
 out="target/$TARGET/release/librespot"
 file "$out" | tee /dev/stderr | grep -q 'ARM aarch64.*statically linked'
 cp "$out" "$BASE/plugins/spotify/service/receiver-arm64"
-# Record every Rust dependency and its license next to the plugin package.
-cargo "+$TOOLCHAIN" tree --locked --target "$TARGET" --no-default-features \
-  --features with-libmdns,rustls-tls-webpki-roots --edges normal --prefix none \
-  --format '{p} {l}' | sort -u > "$BASE/plugins/spotify/licenses/rust-dependencies.txt"
 cp LICENSE "$BASE/plugins/spotify/licenses/librespot-$VERSION-LICENSE"
-# MIT/Apache/BSD require the license text to travel with the binary: copy each
-# dependency's license files from the cargo registry sources used above.
-rm -rf "$BASE/plugins/spotify/licenses/rust"
-mkdir -p "$BASE/plugins/spotify/licenses/rust"
-while read -r name version _; do
-  src=$(ls -d "${CARGO_HOME:-$HOME/.cargo}"/registry/src/*/"$name-${version#v}" 2>/dev/null | head -1)
-  test -n "$src" || continue
-  for f in "$src"/LICENSE* "$src"/COPYING* "$src"/NOTICE*; do
-    test -f "$f" && cp "$f" "$BASE/plugins/spotify/licenses/rust/$name-${version#v}-$(basename "$f")"
-  done
-done < "$BASE/plugins/spotify/licenses/rust-dependencies.txt"
+python3 "$BASE/plugins/spotify/collect-licenses.py" "$PWD" "$TOOLCHAIN"
 echo SPOTIFY_RECEIVER_OK
