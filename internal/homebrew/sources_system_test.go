@@ -188,7 +188,7 @@ func TestStorageFailureOffersLargestPluginsAndDoesNotWrite(t *testing.T) {
 		t.Fatal("package written despite insufficient storage")
 	}
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest("POST", "/api/install", strings.NewReader(`{"ticket":"`+staged["ticket"].(string)+`","permissions":[],"acknowledge_local":true}`))
+	request := httptest.NewRequest("POST", "http://192.168.1.50:8088/api/install", strings.NewReader(`{"ticket":"`+staged["ticket"].(string)+`","permissions":[],"acknowledge_local":true}`))
 	request.Header.Set("Content-Type", "application/json")
 	NewServer(m, nil, "").ServeHTTP(recorder, request)
 	if recorder.Code != 507 || !strings.Contains(recorder.Body.String(), `"code":"insufficient_storage"`) {

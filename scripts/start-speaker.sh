@@ -32,7 +32,10 @@ case "${1:-start}" in
     fi
     # Keep one bounded startup log; runtime plugin logs are bounded in memory.
     if [ -f "$BASE/service.log" ]; then mv "$BASE/service.log" "$BASE/service.previous.log"; fi
-    setsid "$BASE/alice-homebrew" station --listen :8088 --data "$BASE/state" --hardware-led --managed \
+    set -- station --listen :8088 --data "$BASE/state" --hardware-led --managed
+    # Station Mini Root creates this marker when "Protect with an access code" is chosen.
+    if [ -f "$BASE/access-code.enabled" ]; then set -- "$@" --access-code; fi
+    setsid "$BASE/alice-homebrew" "$@" \
       </dev/null >"$BASE/service.log" 2>&1 &
     echo "$!" > "$PID"
     sleep 1

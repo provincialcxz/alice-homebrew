@@ -166,7 +166,7 @@ function managerUpdates(c){
  label.append(enabled,document.createTextNode(updateWords('Автоматически устанавливать обновления','Automatically install updates')));
  const check=button(updateWords('Проверить сейчас','Check now'),async()=>{await api('/api/updates/check',{});toast(updateWords('Проверка обновлений запущена','Update check started'));state.updates=await api('/api/updates');updateManagerUpdates()},'secondary');check.id='manager-update-check';
  row.append(label,check);box.append(row);
- const repo=el('a','caption',updateWords('Релизы на GitHub ↗','GitHub releases ↗'));repo.href='https://github.com/hertebeznat-cell/alice-homebrew/releases';repo.target='_blank';repo.rel='noopener';box.append(repo);c.append(box);updateManagerUpdates();
+ const repo=el('a','caption',updateWords('Релизы на GitHub ↗','GitHub releases ↗'));repo.href='https://github.com/provincialcxz/alice-homebrew/releases';repo.target='_blank';repo.rel='noopener';box.append(repo);c.append(box);updateManagerUpdates();
 }
 function updateManagerUpdates(){
  const u=state.updates,status=$('manager-update-status'),times=$('manager-update-times');if(!u||!status)return;

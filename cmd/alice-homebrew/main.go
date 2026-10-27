@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -107,6 +108,8 @@ func run() error {
 	local := flags.Bool("allow-local-store", false, "allow HTTP catalogs for local testing")
 	scanner := flags.String("scanner", "", "path to clamscan (moderator only)")
 	managed := flags.Bool("managed", false, "managed Linux service: automatic manager updates and restart")
+	accessCode := flags.Bool("access-code", false, "station: require the access code from DATA/admin-token.txt")
+	allowedHosts := flags.String("allowed-host", "", "comma-separated host names accepted besides IP addresses, localhost and .local")
 	if e := flags.Parse(os.Args[2:]); e != nil {
 		return e
 	}
@@ -115,7 +118,7 @@ func run() error {
 	}
 	token, tokenPath := "", ""
 	var e error
-	if role == "store" {
+	if role == "store" || *accessCode {
 		tokenPath = filepath.Join(*data, "admin-token.txt")
 		token, e = homebrew.AccessToken(tokenPath)
 		if e != nil {
@@ -145,7 +148,13 @@ func run() error {
 			return e
 		}
 	}
-	server := &http.Server{Addr: *listen, Handler: homebrew.NewServer(manager, store, token), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+	handler := homebrew.NewServer(manager, store, token)
+	for _, h := range strings.Split(*allowedHosts, ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			handler.AllowedHosts = append(handler.AllowedHosts, h)
+		}
+	}
+	server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	go func() {
 		<-ctx.Done()
 		c, stop := context.WithTimeout(context.Background(), 5*time.Second)
@@ -154,7 +163,7 @@ func run() error {
 	}()
 	fmt.Printf("Alice Homebrew %s: http://%s\n", role, *listen)
 	if tokenPath != "" {
-		fmt.Printf("Moderator access code is in %s\n", tokenPath)
+		fmt.Printf("Access code is in %s\n", tokenPath)
 	}
 	e = server.ListenAndServe()
 	if e == http.ErrServerClosed {

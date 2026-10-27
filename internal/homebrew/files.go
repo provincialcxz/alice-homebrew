@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func randomID() string {
@@ -51,7 +52,12 @@ func atomicFile(path string, b []byte) error {
 func secret(path string) (string, error) {
 	b, e := os.ReadFile(path)
 	if e == nil {
-		return string(b), nil
+		// Hand-edited files often gain a trailing newline; an empty code is never valid.
+		s := strings.TrimSpace(string(b))
+		if s == "" {
+			return "", errors.New("access code file is empty: " + path)
+		}
+		return s, nil
 	}
 	if !os.IsNotExist(e) {
 		return "", e

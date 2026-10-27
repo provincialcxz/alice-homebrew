@@ -353,13 +353,13 @@ func TestPinnedKeyAndCatalogRollback(t *testing.T) {
 func TestAuthenticationAndOriginChecks(t *testing.T) {
 	m := manager(t)
 	s := NewServer(m, nil, "correct-token")
-	req := httptest.NewRequest("GET", "/api/state", nil)
+	req := httptest.NewRequest("GET", "http://192.168.1.50:8088/api/state", nil)
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, req)
 	if w.Code != 401 {
 		t.Fatal("unauthenticated state exposed")
 	}
-	req = httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"token":"correct-token"}`))
+	req = httptest.NewRequest("POST", "http://192.168.1.50:8088/api/login", strings.NewReader(`{"token":"correct-token"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
 	s.ServeHTTP(w, req)
@@ -370,7 +370,7 @@ func TestAuthenticationAndOriginChecks(t *testing.T) {
 	if !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode {
 		t.Fatal("weak session cookie")
 	}
-	req = httptest.NewRequest("POST", "/api/settings", strings.NewReader(`{"catalog_url":"","catalog_key":""}`))
+	req = httptest.NewRequest("POST", "http://192.168.1.50:8088/api/settings", strings.NewReader(`{"catalog_url":"","catalog_key":""}`))
 	req.AddCookie(cookie)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "http://attacker.example")
@@ -384,17 +384,17 @@ func TestAuthenticationAndOriginChecks(t *testing.T) {
 func TestStationWithoutAccessCode(t *testing.T) {
 	s := NewServer(manager(t), nil, "")
 	w := httptest.NewRecorder()
-	s.ServeHTTP(w, httptest.NewRequest("GET", "/api/state", nil))
+	s.ServeHTTP(w, httptest.NewRequest("GET", "http://192.168.1.50:8088/api/state", nil))
 	if w.Code != 200 {
 		t.Fatal("station requested an access code", w.Body.String())
 	}
 	w = httptest.NewRecorder()
-	s.ServeHTTP(w, httptest.NewRequest("GET", "/api/about", nil))
+	s.ServeHTTP(w, httptest.NewRequest("GET", "http://192.168.1.50:8088/api/about", nil))
 	var about map[string]any
 	if e := json.Unmarshal(w.Body.Bytes(), &about); e != nil || about["access_code_required"] != false || about["authenticated"] != true {
 		t.Fatal("station did not advertise direct access", w.Body.String())
 	}
-	req := httptest.NewRequest("POST", "/api/settings", strings.NewReader(`{"catalog_url":"","catalog_key":""}`))
+	req := httptest.NewRequest("POST", "http://192.168.1.50:8088/api/settings", strings.NewReader(`{"catalog_url":"","catalog_key":""}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "http://attacker.example")
 	w = httptest.NewRecorder()
