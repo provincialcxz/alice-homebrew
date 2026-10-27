@@ -20,7 +20,7 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq clang lld
           bash scripts/build-example.sh
-          for example in ring-studio sound-ring; do
+          for example in ring-studio sound-ring ring-clock; do
             go run ./cmd/alice-homebrew pack "examples/$example" "$RUNNER_TEMP/$example.aliceplugin"
             go run ./cmd/alice-homebrew check "$RUNNER_TEMP/$example.aliceplugin"
           done

@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-var hostImports = map[string]bool{"config_number": true, "config_string": true, "led_write": true, "log": true, "button_event": true, "proximity": true, "audio_levels": true}
+var hostImports = map[string]bool{"config_number": true, "config_string": true, "led_write": true, "log": true, "button_event": true, "proximity": true, "audio_levels": true, "utc_time": true, "random_u32": true}
 
 // Bound declarations before handing untrusted modules to the runtime. Linear
 // memory limits alone do not constrain function tables or parser allocations.

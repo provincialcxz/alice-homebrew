@@ -154,6 +154,36 @@ func TestProximityAndAudioLevels(t *testing.T) {
 	}
 }
 
+func TestUTCTimeAndRandom(t *testing.T) {
+	r := api3Runner(t, "utc_time", true, []string{}, RunnerEnv{})
+	r.now = func() time.Time { return time.Date(2026, 10, 27, 23, 30, 15, 0, time.FixedZone("MSK", 3*3600)) }
+	if _, e := r.Tick(nil, 0); e != nil {
+		t.Fatal(e)
+	}
+	b := memory(t, r, 16, 8)
+	if binary.LittleEndian.Uint32(memory(t, r, 0, 4)) != 1 || binary.LittleEndian.Uint16(b) != 2026 || b[2] != 10 || b[3] != 27 || b[4] != 20 || b[5] != 30 || b[6] != 15 || b[7] != 2 {
+		t.Fatal("UTC time", b)
+	}
+	r.now = func() time.Time { return time.Unix(0, 0) }
+	r.Tick(nil, 0)
+	if binary.LittleEndian.Uint32(memory(t, r, 0, 4)) != 0 {
+		t.Fatal("unsynced clock reported as valid")
+	}
+	m := manifest("1.0.0") // API 1
+	p, e := Parse(packageBytes(t, m, hostCallWasm("utc_time", true), ""))
+	if e != nil {
+		t.Fatal(e)
+	}
+	old, e := NewRunner(p, map[string]any{}, RunnerEnv{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer old.Close()
+	if _, e = old.Tick(nil, 0); e == nil || !strings.Contains(e.Error(), "requires API 3") {
+		t.Fatal("API 1 module used an API 3 function", e)
+	}
+}
+
 func TestAPI3ManifestRules(t *testing.T) {
 	ok := manifest("1.0.0")
 	ok.API, ok.Permissions = 3, []string{"led.ring", "input.buttons", "sensor.proximity", "audio.levels"}

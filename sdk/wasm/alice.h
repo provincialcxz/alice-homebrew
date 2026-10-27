@@ -46,4 +46,17 @@ typedef struct {
 } alice_audio_levels;
 ALICE_IMPORT("audio_levels") extern u32 alice_audio_levels_read(alice_audio_levels *out);
 
+/* API 3, no permission: current UTC time. The speaker's time zone setting is
+ * unknown, so add your own offset (for example from a config field). Returns 0
+ * while the clock is not synced yet (year before 2024). */
+typedef struct {
+	u16 year;
+	u8 month, day, hour, minute, second;
+	u8 weekday; /* 0 Sunday */
+} alice_time;
+ALICE_IMPORT("utc_time") extern u32 alice_utc_time(alice_time *out);
+
+/* API 3, no permission: a random 32-bit number for effects (not for secrets). */
+ALICE_IMPORT("random_u32") extern u32 alice_random_u32(void);
+
 #endif

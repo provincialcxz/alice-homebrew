@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ type Runner struct {
 	Logs     []string
 	env      RunnerEnv
 	keys     int
+	now      func() time.Time
 }
 
 // RunnerEnv carries the read-only speaker data offered to API 3 permissions.
@@ -52,7 +54,7 @@ func NewRunner(p *Package, config map[string]any, env RunnerEnv) (*Runner, error
 	if e := wasmLimits(p.Module); e != nil {
 		return nil, e
 	}
-	r := &Runner{manifest: p.Manifest, config: config, env: env}
+	r := &Runner{manifest: p.Manifest, config: config, env: env, now: time.Now}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	r.rt = wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigInterpreter().WithMemoryLimitPages(32).WithCloseOnContextDone(true).WithDebugInfoEnabled(false))
@@ -170,6 +172,33 @@ func NewRunner(p *Package, config map[string]any, env RunnerEnv) (*Runner, error
 		}
 		return 0
 	}).Export("audio_levels")
+	// utc_time(out) writes 8 bytes of UTC: year u16, month, day, hour, minute,
+	// second, weekday (0 Sunday). The speaker's time zone setting is unknown,
+	// so plugins apply their own offset. Returns 0 while the clock is unsynced.
+	// Time and randomness reveal nothing about the user, so no permission, but
+	// API 1 modules must keep working on older managers and cannot use them.
+	host.NewFunctionBuilder().WithFunc(func(_ context.Context, m api.Module, out uint32) uint32 {
+		if !r.api3("utc_time") {
+			return 0
+		}
+		now := r.now().UTC()
+		b := []byte{0, 0, byte(now.Month()), byte(now.Day()), byte(now.Hour()), byte(now.Minute()), byte(now.Second()), byte(now.Weekday())}
+		binary.LittleEndian.PutUint16(b, uint16(now.Year()))
+		if m.Memory() == nil || !m.Memory().Write(out, b) {
+			r.hostErr = errors.New("time buffer is outside WebAssembly memory")
+			return 0
+		}
+		if now.Year() < 2024 {
+			return 0
+		}
+		return 1
+	}).Export("utc_time")
+	host.NewFunctionBuilder().WithFunc(func(context.Context, api.Module) uint32 {
+		if !r.api3("random_u32") {
+			return 0
+		}
+		return rand.Uint32()
+	}).Export("random_u32")
 	if _, err := host.Instantiate(ctx); err != nil {
 		return fail(err)
 	}
@@ -193,6 +222,14 @@ func NewRunner(p *Package, config map[string]any, env RunnerEnv) (*Runner, error
 	r.pending = nil
 	r.frames = 0
 	return r, nil
+}
+
+func (r *Runner) api3(function string) bool {
+	if r.manifest.API >= 3 {
+		return true
+	}
+	r.hostErr = errors.New(function + " requires API 3")
+	return false
 }
 
 // allowed stops the plugin, like led_write does, when a permission is missing.

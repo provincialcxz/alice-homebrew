@@ -1,0 +1,17 @@
+{
+  "format": 1,
+  "id": "alice.ring-clock",
+  "version": "1.0.0",
+  "title": {"ru": "Часы на кольце", "en": "Ring Clock"},
+  "description": {"ru": "Кольцо показывает время: яркий огонёк — час, тусклый — минуты, бегущий белый — секунды. Без root.", "en": "The ring shows the time: bright light for the hour, dim for minutes, a gliding white light for seconds. No root."},
+  "author": "Alice Homebrew",
+  "api": 3,
+  "permissions": ["led.ring"],
+  "config": [
+    {"key": "color", "label": {"ru": "Цвет", "en": "Color"}, "type": "color", "default": "#ffb347"},
+    {"key": "brightness", "label": {"ru": "Яркость, %", "en": "Brightness, %"}, "type": "range", "default": 30, "min": 0, "max": 100, "step": 1},
+    {"key": "utc-offset", "label": {"ru": "Часовой пояс, UTC+", "en": "Time zone, UTC+"}, "type": "range", "default": 3, "min": -12, "max": 14, "step": 1},
+    {"key": "seconds", "label": {"ru": "Секундная стрелка", "en": "Seconds hand"}, "type": "boolean", "default": true}
+  ],
+  "module_sha256": ""
+}

@@ -8,12 +8,13 @@ import (
 	"time"
 )
 
-// Runs the committed examples/sound-ring build against simulated speaker data.
-func TestSoundRingExample(t *testing.T) {
-	dir := filepath.Join("..", "..", "examples", "sound-ring")
+// exampleRunner loads a committed examples/<name> build with default config.
+func exampleRunner(t *testing.T, name string, env RunnerEnv) (*Runner, map[string]any) {
+	t.Helper()
+	dir := filepath.Join("..", "..", "examples", name)
 	module, e := os.ReadFile(filepath.Join(dir, "plugin.wasm"))
 	if e != nil {
-		t.Skip("build examples/sound-ring first:", e)
+		t.Skip("build examples first:", e)
 	}
 	raw, e := os.ReadFile(filepath.Join(dir, "manifest.json"))
 	if e != nil {
@@ -31,12 +32,44 @@ func TestSoundRingExample(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	inputs, audio := NewInputs(), &AudioMeter{}
-	r, e := NewRunner(p, config, RunnerEnv{Inputs: inputs, Audio: audio})
+	r, e := NewRunner(p, config, env)
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer r.Close()
+	t.Cleanup(r.Close)
+	return r, config
+}
+
+func TestRingClockExample(t *testing.T) {
+	r, config := exampleRunner(t, "ring-clock", RunnerEnv{})
+	r.now = func() time.Time { return time.Date(2026, 10, 27, 10, 25, 30, 0, time.UTC) }
+	frame, e := r.Tick(config, 0)
+	if e != nil || len(frame) != 36 {
+		t.Fatal(e, len(frame))
+	}
+	led := func(i int) int { return int(frame[i*3]) + int(frame[i*3+1]) + int(frame[i*3+2]) }
+	// 13:25:30 at UTC+3: hour LED 1 brightest, minute LED 5 dimmer, seconds on LED 6.
+	if !(led(1) > led(5) && led(5) > led(6) && led(6) > 0) {
+		t.Fatal("clock hands", led(1), led(5), led(6), frame)
+	}
+	for _, i := range []int{0, 2, 3, 4, 7, 8, 9, 10, 11} {
+		if led(i) != 0 {
+			t.Fatal("unexpected lit LED", i, frame)
+		}
+	}
+	r.now = func() time.Time { return time.Unix(0, 0) }
+	for ms := uint32(0); ms < 2000; ms += 50 {
+		if frame, e = r.Tick(config, ms); e != nil {
+			t.Fatal(e)
+		}
+	}
+}
+
+// Runs the committed examples/sound-ring build against simulated speaker data.
+func TestSoundRingExample(t *testing.T) {
+	inputs, audio := NewInputs(), &AudioMeter{}
+	r, config := exampleRunner(t, "sound-ring", RunnerEnv{Inputs: inputs, Audio: audio})
+	var e error
 	play := func(bands func(i int) float64) {
 		audio.mu.Lock()
 		audio.levels = AudioLevels{RMS: 0.4, Peak: 0.8, Updated: time.Now()}
