@@ -27,6 +27,7 @@ def main(argv=None,log=print):
     parser.add_argument('--install',action='store_true')
     parser.add_argument('--autostart',action='store_true')
     parser.add_argument('--access-code',action='store_true',help='require an access code to open the manager')
+    parser.add_argument('--button-confirm',action='store_true',help='require a speaker button press before native plugins start')
     args=parser.parse_args(argv)
     if args.autostart and not args.install: parser.error('--autostart requires --install')
     try:
@@ -95,6 +96,7 @@ def main(argv=None,log=print):
                 shell('mount -o remount,ro /')
         # The marker survives manager self-updates; start.sh turns it into --access-code.
         shell(f'touch {root}/access-code.enabled' if args.access_code else f'rm -f {root}/access-code.enabled')
+        shell(f'touch {root}/button-confirm.enabled' if args.button_confirm else f'rm -f {root}/button-confirm.enabled')
         shell(root+'/start.sh start')
         port=run(target+['forward','tcp:0','tcp:8088'])
         if not port.isdigit(): raise RuntimeError('Could not create a temporary health-check tunnel')
@@ -103,12 +105,17 @@ def main(argv=None,log=print):
             try:
                 with urllib.request.urlopen('http://127.0.0.1:'+port+'/api/about',timeout=2) as response:
                     health=json.load(response)
-                if health.get('mode')=='station' and health.get('access_code_required') is args.access_code: break
+                if health.get('mode')=='station' and health.get('access_code_required') is args.access_code and health.get('button_confirm',False) is args.button_confirm: break
             except (OSError,ValueError): pass
             time.sleep(.5)
         else:
             if args.access_code and health.get('mode')=='station':
                 raise RuntimeError('The installed Homebrew does not support access codes; install a newer Homebrew build')
+            if args.button_confirm and health.get('mode')=='station':
+                raise RuntimeError('The installed Homebrew does not support button confirmation; install Homebrew 0.6.1 or newer')
+            if args.button_confirm:
+                # Older managers reject the unknown flag and never start.
+                raise RuntimeError('Service did not start with button confirmation; Homebrew 0.6.1 or newer is required. Read /data/alice-homebrew/service.log')
             raise RuntimeError('Service did not become ready; read /data/alice-homebrew/service.log')
         network=shell('ip -4 addr show wlan0')
         addresses=re.findall(r'inet (\d+\.\d+\.\d+\.\d+)/',network)
