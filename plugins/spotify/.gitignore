@@ -1,4 +1,3 @@
-/service/receiver-arm64
+/service/runtime/*
+!/service/runtime/README.md
 /plugin.elf
-/licenses/rust/
-/licenses/rust-dependencies.txt

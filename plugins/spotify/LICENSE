@@ -18,8 +18,17 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
-The embedded receiver is librespot 0.8.0 (MIT, Copyright (c) 2015 Paul Lietar
-and librespot contributors), built from the crates.io source with its own
-Cargo.lock. Its Rust dependencies and their licenses are listed in
-licenses/rust-dependencies.txt and their license files are copied to
-licenses/rust/ by build-receiver.sh. Go runtime: BSD-style license (licenses/go-LICENSE).
+Spotify Soloist is not included. It is Spotify's software under Spotify's
+terms; the plugin downloads it from Spotify on the speaker, together with
+its THIRD_PARTY_LICENSES.txt.
+
+Bundled runtime (built by build-runtime.sh from Debian 13 packages):
+- GNU C Library 2.41 (libc6): LGPL-2.1-or-later, see licenses/runtime/libc6-copyright.
+  Source: https://deb.debian.org/debian/pool/main/g/glibc/
+- libatomic1 and libgcc-s1 from GCC 14: GPL-3.0-or-later with the GCC Runtime
+  Library Exception, see licenses/runtime/gcc-14-base-copyright.
+  Source: https://deb.debian.org/debian/pool/main/g/gcc-14/
+- Mozilla CA certificates (ca-certificates): MPL-2.0, see licenses/runtime/ca-certificates-copyright.
+- libpulse.so.0 in the runtime is not PulseAudio: it is this plugin's own shim
+  (pulse-shim/pulse.c, MIT, as above).
+Go runtime: BSD-style license (licenses/go-LICENSE).

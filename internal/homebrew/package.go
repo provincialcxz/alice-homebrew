@@ -49,6 +49,8 @@ type Field struct {
 	Step      float64  `json:"step,omitempty"`
 	Options   []Option `json:"options,omitempty"`
 	MaxLength int      `json:"max_length,omitempty"`
+	Help      *Text    `json:"help,omitempty"`
+	Link      string   `json:"link,omitempty"`
 }
 type Manifest struct {
 	Format         int      `json:"format"`
@@ -92,7 +94,9 @@ func ValidateManifest(m Manifest) error {
 	if (m.Engine != "" && m.Engine != "native") || (m.Engine == "native") != (m.API == 2) {
 		return errors.New("native plugins require API 2; WASM plugins use API 1 or 3")
 	}
-	if m.RuntimeStorage > 64<<20 || (m.Engine != "native" && m.RuntimeStorage != 0) {
+	// Room for receivers that download their own binary, such as Spotify
+	// Soloist, which needs two copies of itself while it updates.
+	if m.RuntimeStorage > 128<<20 || (m.Engine != "native" && m.RuntimeStorage != 0) {
 		return errors.New("invalid native runtime storage allowance")
 	}
 	if len(m.Capabilities) > 32 {
@@ -151,15 +155,37 @@ func ValidateManifest(m Manifest) error {
 			if f.MaxLength < 1 || f.MaxLength > 1024 {
 				return errors.New("invalid text length")
 			}
+		case "secret":
+			// Secrets such as API keys are never sent back to the browser,
+			// and a default would be a secret shipped inside the package.
+			if f.MaxLength < 1 || f.MaxLength > 1024 || f.Default != "" {
+				return errors.New("secret fields need a length limit and an empty default")
+			}
 		case "color", "boolean":
 		default:
 			return fmt.Errorf("unsupported field type: %s", f.Type)
+		}
+		if f.Help != nil && len(f.Help.RU)+len(f.Help.EN) > 1000 {
+			return errors.New("field help is too long")
+		}
+		if f.Link != "" && (len(f.Link) > 300 || !strings.HasPrefix(f.Link, "https://")) {
+			return errors.New("field link must be an https URL")
 		}
 		if err := validateValue(f, f.Default); err != nil {
 			return fmt.Errorf("default %s: %w", f.Key, err)
 		}
 	}
 	return nil
+}
+
+// printable accepts the visible ASCII that a pasted key or token is made of.
+func printable(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] <= ' ' || s[i] > '~' {
+			return false
+		}
+	}
+	return true
 }
 func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 func validateValue(f Field, v any) error {
@@ -174,6 +200,10 @@ func validateValue(f Field, v any) error {
 		}
 	case "text":
 		if s, ok := v.(string); ok && len([]rune(s)) <= f.MaxLength {
+			return nil
+		}
+	case "secret":
+		if s, ok := v.(string); ok && len(s) <= f.MaxLength && printable(s) {
 			return nil
 		}
 	case "select":

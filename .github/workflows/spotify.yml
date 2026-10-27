@@ -1,9 +1,9 @@
 name: Build Spotify Connect plugin
 on:
   push:
-    paths: ['plugins/spotify/**', 'plugins/internal/**', 'sdk/quasar/**', '.github/workflows/spotify.yml']
+    paths: ['plugins/spotify/**', 'internal/homebrew/package.go', 'plugins/internal/**', 'sdk/quasar/**', '.github/workflows/spotify.yml']
   pull_request:
-    paths: ['plugins/spotify/**', 'plugins/internal/**', 'sdk/quasar/**', '.github/workflows/spotify.yml']
+    paths: ['plugins/spotify/**', 'internal/homebrew/package.go', 'plugins/internal/**', 'sdk/quasar/**', '.github/workflows/spotify.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -16,12 +16,10 @@ jobs:
         with:
           go-version: '1.26.5'
           cache: true
-      - name: Install zig and cargo-zigbuild
-        run: |
-          python3 -m pip install --user ziglang==0.15.1
-          cargo install cargo-zigbuild --version 0.23.4 --locked
-      - name: Build librespot for aarch64 musl
-        run: bash plugins/spotify/build-receiver.sh
+      - name: Install zig
+        run: python3 -m pip install --user ziglang==0.15.1
+      - name: Build the Soloist runtime and libpulse shim
+        run: bash plugins/spotify/build-runtime.sh
       - run: go test -tags spotify ./plugins/spotify/... ./plugins/internal/... ./sdk/quasar/...
       - name: Package and validate the plugin
         run: |
@@ -33,4 +31,5 @@ jobs:
           path: |
             release/spotify-connect-*.aliceplugin
             plugins/spotify/licenses/
+            plugins/spotify/service/runtime/
           if-no-files-found: error

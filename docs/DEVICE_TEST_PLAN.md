@@ -67,14 +67,25 @@ adb devices
 
 ## 5. Spotify Connect
 
-Пакет собирает CI (`spotify.yml`, артефакт `spotify-connect-plugin`) или вы сами на Linux: `bash plugins/spotify/build-receiver.sh && python3 plugins/spotify/build-plugin.py`. Установка — «Добавить пакет», файл `release/spotify-connect-1.0.0-beta.1.aliceplugin`. Нужен Spotify Premium; аккаунт заранее можно проверить на ПК (см. README плагина).
+Пакет собирает CI (`spotify.yml`, артефакт `spotify-connect-plugin`) или вы сами на Linux/WSL: `bash plugins/spotify/build-runtime.sh && python3 plugins/spotify/build-plugin.py`. Установка — «Добавить пакет», файл `release/spotify-connect-2.0.0-beta.1.aliceplugin`. Нужны Spotify Premium и свой ключ Soloist (см. README плагина).
 
-- [ ] Плагин включается, в журнале `Spotify Connect ready`.
-- [ ] Колонка видна в Spotify, музыка играет, Алиса продолжает отвечать.
+Перед включением:
+
+```bash
+adb shell "df -h /data; free -m"
+```
+
+📋 Свободное место на `/data` (плагину нужно около 100 МБ) и свободная память.
+
+- [ ] В настройках плагина вставьте ключ и сохраните: поле показывает «Ключ сохранён на колонке», справа «API-ключ: сохранён».
+- [ ] Включите плагин. В журнале `downloaded Soloist …`, затем `using Soloist …, expires …` и `Spotify Connect ready`.
+- [ ] Колонка видна в Spotify, вход проходит, музыка играет, Алиса продолжает отвечать.
+- [ ] 🎧 Звук чистый, без заиканий и треска, громкость из приложения Spotify меняется.
 - [ ] Во время музыки скажите «Алиса» — музыка плавно стихает до 20 % и возвращается после ответа.
 - [ ] «Звуковое кольцо» реагирует и на Spotify.
 - [ ] После перезапуска службы колонка остаётся в аккаунте Spotify.
-- [ ] 📋 Если треки не играют — строки журнала плагина с `audio key` или `error`.
+- [ ] 📋 Через 10 минут музыки: `adb shell "top -b -n 1 | head -15; du -sh /data/alice-homebrew/plugins/spotify-connect/*"` — нагрузка на процессор, память Soloist и размер кэша (не больше ~24 МБ).
+- [ ] 📋 Если что-то не так — строки журнала плагина с `error`, `alice-pulse` или `Soloist`.
 
 ## 6. Разведка для громкости в API 3
 

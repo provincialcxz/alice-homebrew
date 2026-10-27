@@ -1,7 +1,13 @@
 //go:build spotify
 
-// Spotify Connect service. MIT, Alice Homebrew contributors. The embedded
-// librespot receiver (MIT) and its Rust dependencies retain their licenses.
+// Spotify Connect service. MIT, Alice Homebrew contributors.
+//
+// The receiver is Spotify Soloist, Spotify's own headless Connect client. Its
+// licence forbids redistribution, so the plugin downloads it from Spotify on
+// the speaker and runs it on the bundled arm64 glibc (runtime/, LGPL). Soloist
+// only plays through PulseAudio, so runtime/lib/libpulse.so.0 is a small shim
+// that writes its PCM to a FIFO; this service reads the FIFO and plays it
+// through Alice's mixer with sharedaudio.
 package main
 
 import (
@@ -9,7 +15,6 @@ import (
 	"alicehomebrew/sdk/quasar"
 	"bufio"
 	"context"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,58 +27,70 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
 
-//go:embed receiver-arm64
-var receiver []byte
-
 type configuration struct {
 	Name          string  `json:"name"`
-	Bitrate       string  `json:"bitrate"`
+	APIKey        string  `json:"api-key"`
 	InitialVolume float64 `json:"initial-volume"`
-	Normalise     bool    `json:"normalisation"`
-	Port          int     `json:"port"`
 	// DuckVolume is the music level, in percent, while Alice listens or
 	// answers; 100 turns ducking off.
 	DuckVolume float64 `json:"duck-volume"`
 }
 
-// arguments builds the librespot command line. Audio always leaves through the
-// pipe backend as 44.1 kHz S16 stereo, which sharedaudio plays through Alice's
-// mixer; librespot itself never opens the sound card.
-func arguments(c configuration, root string) ([]string, error) {
+var apiKeyRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]{7,127}$`)
+
+func (c configuration) validate() error {
 	if strings.TrimSpace(c.Name) == "" || len([]byte(c.Name)) > 48 || strings.ContainsAny(c.Name, "\x00\r\n") {
-		return nil, errors.New("name must be 1-48 UTF-8 bytes; newlines are not allowed")
+		return errors.New("name must be 1-48 UTF-8 bytes; newlines are not allowed")
 	}
-	switch c.Bitrate {
-	case "96", "160", "320":
-	default:
-		return nil, errors.New("bitrate must be 96, 160 or 320")
+	if c.APIKey != "" && !apiKeyRE.MatchString(c.APIKey) {
+		return errors.New("the Soloist API key has unexpected characters; paste it again from the Spotify dashboard")
 	}
-	if c.InitialVolume < 0 || c.InitialVolume > 100 || c.DuckVolume < 0 || c.DuckVolume > 100 || c.Port < 1024 || c.Port > 65535 {
-		return nil, errors.New("invalid volume or port")
+	if c.InitialVolume < 0 || c.InitialVolume > 100 || c.DuckVolume < 0 || c.DuckVolume > 100 {
+		return errors.New("invalid volume")
 	}
-	args := []string{
-		"--name", c.Name,
-		"--device-type", "speaker",
-		"--backend", "pipe",
-		"--format", "S16",
-		"--bitrate", c.Bitrate,
+	return nil
+}
+
+// layout is where everything lives inside the plugin data directory.
+type layout struct{ root string }
+
+func (l layout) runtime() string { return filepath.Join(l.root, "runtime") }
+func (l layout) lib() string     { return filepath.Join(l.runtime(), "lib") }
+func (l layout) loader() string  { return filepath.Join(l.lib(), "ld-linux-aarch64.so.1") }
+func (l layout) soloist() string { return filepath.Join(l.root, "soloist", "current", "soloist") }
+func (l layout) state() string   { return filepath.Join(l.root, "state") }
+func (l layout) cache() string   { return filepath.Join(l.root, "cache") }
+func (l layout) fifo() string    { return filepath.Join(l.root, "audio.fifo") }
+
+// command runs a Soloist binary through the bundled loader, so it gets the
+// bundled glibc instead of the speaker's old one.
+func (l layout) command(ctx context.Context, binary string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, l.loader(), append([]string{"--library-path", l.lib(), binary}, args...)...)
+	cmd.Env = []string{
+		"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8",
+		"HOME=" + l.root, "TMPDIR=" + l.root,
+		"SSL_CERT_FILE=" + filepath.Join(l.runtime(), "ca-certificates.crt"),
+		"ALICE_PULSE_FIFO=" + l.fifo(),
+	}
+	return cmd
+}
+
+// arguments builds the Soloist command line. Soloist does not accept a cache
+// below 100 MB, so the cache is trimmed separately (see trimCache).
+func arguments(c configuration, l layout) []string {
+	return []string{
+		"--device-name", c.Name,
+		"--api-key", c.APIKey,
+		"--data-dir", l.state(),
+		"--cache-dir", l.cache(),
+		"--cache-size", "100",
 		"--initial-volume", strconv.Itoa(int(c.InitialVolume)),
-		"--volume-ctrl", "log",
-		// The credential cache keeps the login across restarts; audio files
-		// are not cached so the speaker's small /data is not filled.
-		"--cache", filepath.Join(root, "cache"),
-		"--system-cache", filepath.Join(root, "cache"),
-		"--disable-audio-cache",
-		"--zeroconf-port", strconv.Itoa(c.Port),
 	}
-	if c.Normalise {
-		args = append(args, "--enable-volume-normalisation")
-	}
-	return args, nil
 }
 
 // duckFor lowers the music while Alice is busy and restores it afterwards,
@@ -94,18 +111,31 @@ func duckFor(shared interface{ SetDuck(float64) }, volume float64) func(quasar.S
 	}
 }
 
-var accountName = regexp.MustCompile(`(Authenticated as) '[^']*'`)
+var (
+	ansi     = regexp.MustCompile("\x1b\\[[0-9;]*m")
+	accounts = regexp.MustCompile(`(logged in as|session:)\s*\[?(?:session:)?[A-Za-z0-9]+`)
+	// Soloist tries to re-run itself as a crash handler through
+	// /proc/self/exe, which is the loader here; that fails harmlessly.
+	crashpad = regexp.MustCompile(`crashpad-handler|ld-linux-aarch64\.so\.1 --help|recvmsg: Connection reset`)
+)
 
-// redact keeps Spotify user names out of the plugin log shown in the manager.
-func redact(line string) string {
-	return accountName.ReplaceAllString(line, "$1 '…'")
+// cleanLog keeps Spotify account IDs out of the plugin log shown in the
+// manager and drops noise. It returns "" for lines that should be skipped.
+func cleanLog(line string) string {
+	line = ansi.ReplaceAllString(line, "")
+	if crashpad.MatchString(line) {
+		return ""
+	}
+	return accounts.ReplaceAllString(line, "$1 …")
 }
 
 func forwardLog(r io.Reader) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 4096), 16384)
 	for scanner.Scan() {
-		log.Print(redact(scanner.Text()))
+		if line := cleanLog(scanner.Text()); line != "" {
+			log.Print(line)
+		}
 	}
 }
 
@@ -125,22 +155,33 @@ func run() error {
 	if e = json.Unmarshal(b, &c); e != nil {
 		return e
 	}
+	if e = c.validate(); e != nil {
+		return e
+	}
 	root := os.Getenv("ALICE_PLUGIN_DATA")
 	if root == "" {
 		return errors.New("ALICE_PLUGIN_DATA missing")
 	}
-	args, e := arguments(c, root)
-	if e != nil {
-		return e
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	if c.APIKey == "" {
+		// Not an error: the plugin waits until the key is saved, which
+		// restarts it.
+		log.Print("Paste your Spotify Soloist API key in the plugin settings: developer.spotify.com/dashboard/soloist (Spotify Premium is required)")
+		<-ctx.Done()
+		return nil
 	}
-	if e = os.MkdirAll(filepath.Join(root, "cache"), 0700); e != nil {
-		return e
+	l := layout{root}
+	for _, dir := range []string{l.state(), l.cache(), filepath.Dir(filepath.Dir(l.soloist()))} {
+		if e = os.MkdirAll(dir, 0700); e != nil {
+			return e
+		}
 	}
-	binary := filepath.Join(root, "librespot")
-	if e = os.WriteFile(binary, receiver, 0700); e != nil {
-		return e
+	if e = installRuntime(l); e != nil {
+		return fmt.Errorf("runtime: %w", e)
 	}
-	if e = os.Chmod(binary, 0700); e != nil {
+	u := newUpdater(l)
+	if e = u.ensure(ctx); e != nil {
 		return e
 	}
 	shared, e := sharedaudio.New(root)
@@ -148,40 +189,102 @@ func run() error {
 		return e
 	}
 	defer shared.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	var lastAudio atomic.Int64
+	if e = pipeAudio(ctx, l.fifo(), shared, &lastAudio); e != nil {
+		return fmt.Errorf("audio FIFO: %w", e)
+	}
 	if c.DuckVolume < 100 {
 		go quasar.Watch(ctx, quasar.Address, duckFor(shared, c.DuckVolume))
 	}
-	cmd := exec.Command(binary, args...)
-	cmd.Stdout = shared
-	stderr, e := cmd.StderrPipe()
-	if e != nil {
-		return e
-	}
-	if e = cmd.Start(); e != nil {
-		return e
-	}
-	go forwardLog(stderr)
-	log.Printf("Spotify Connect ready: %q, %s kbps, TCP %d; audio through Alice's shared mixer", c.Name, c.Bitrate, c.Port)
-	finished := make(chan error, 1)
-	go func() { finished <- cmd.Wait() }()
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGTERM, os.Interrupt)
-	defer signal.Stop(signals)
-	select {
-	case <-signals:
-		_ = cmd.Process.Signal(syscall.SIGTERM)
+	go trimCacheLoop(ctx, l.cache())
+	ready := make(chan struct{}, 1)
+	go u.loop(ctx, ready)
+	return supervise(ctx, c, l, u, ready, &lastAudio)
+}
+
+// exitExpired is Soloist's exit code for a build past its 90 days.
+const exitExpired = 10
+
+// supervise keeps Soloist running. It restarts it after crashes with a
+// growing delay, swaps in a downloaded update once nothing has played for a
+// while, and fetches a new build at once if the current one has expired.
+func supervise(ctx context.Context, c configuration, l layout, u *updater, ready chan struct{}, lastAudio *atomic.Int64) error {
+	delay := 5 * time.Second
+	for {
+		started := time.Now()
+		cmd := l.command(context.Background(), l.soloist(), arguments(c, l)...)
+		stderr, e := cmd.StderrPipe()
+		if e != nil {
+			return e
+		}
+		cmd.Stdout = cmd.Stderr
+		if e = cmd.Start(); e != nil {
+			return fmt.Errorf("start Soloist: %w", e)
+		}
+		go forwardLog(stderr)
+		log.Printf("Spotify Connect ready: %q; audio through Alice's shared mixer", c.Name)
+		finished := make(chan error, 1)
+		go func() { finished <- cmd.Wait() }()
+		restart := ""
+		for restart == "" {
+			select {
+			case <-ctx.Done():
+				terminate(cmd, finished)
+				return nil
+			case <-ready:
+				// Swap only when idle so an update never cuts a song.
+				if time.Since(time.Unix(0, lastAudio.Load())) > 2*time.Minute {
+					restart = "update"
+				} else {
+					go func() { time.Sleep(time.Minute); requeue(ready) }()
+				}
+			case e = <-finished:
+				restart = "exit"
+			}
+		}
+		if restart == "update" {
+			terminate(cmd, finished)
+			if e = u.promote(); e != nil {
+				log.Printf("update not applied: %v", e)
+			}
+			continue
+		}
+		var exit *exec.ExitError
+		if errors.As(e, &exit) && exit.ExitCode() == exitExpired {
+			log.Print("this Soloist build has expired; downloading a new one")
+			if e = u.refresh(ctx); e != nil {
+				return fmt.Errorf("expired build and no update: %w", e)
+			}
+			continue
+		}
+		if time.Since(started) > 5*time.Minute {
+			delay = 5 * time.Second
+		}
+		log.Printf("Soloist stopped (%v); restarting in %s", e, delay)
 		select {
-		case <-finished:
-		case <-time.After(time.Second):
-			_ = cmd.Process.Kill()
+		case <-ctx.Done():
+			return nil
+		case <-time.After(delay):
 		}
-		return nil
-	case e := <-finished:
-		if e == nil {
-			return errors.New("receiver exited")
+		if delay *= 2; delay > 5*time.Minute {
+			delay = 5 * time.Minute
 		}
-		return fmt.Errorf("receiver stopped: %w", e)
+	}
+}
+
+func requeue(ready chan<- struct{}) {
+	select {
+	case ready <- struct{}{}:
+	default:
+	}
+}
+
+func terminate(cmd *exec.Cmd, finished <-chan error) {
+	_ = cmd.Process.Signal(syscall.SIGTERM)
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		_ = cmd.Process.Kill()
+		<-finished
 	}
 }

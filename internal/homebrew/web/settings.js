@@ -23,7 +23,7 @@ const settingsWords={
  'Установленных плагинов нет. Освободите место на колонке вручную и повторите проверку.':'There are no installed plugins. Free some storage on the speaker and check again.',
  'Проверить место снова':'Check storage again','Освободить место':'Free up storage','Места достаточно':'Enough storage','Места от удаления этих плагинов может не хватить.':'Removing these plugins may not free enough storage.',
  'Настройки сохраняются на колонке и остаются после перезагрузки.':'Settings are saved on the speaker and survive restarts.',
- 'Сохранить настройки':'Save settings','Скачать конфиг':'Download config','Все источники':'All sources','Источники ещё не загружены. Нажмите «Обновить каталог».':'Sources have not loaded yet. Press Refresh catalog.',
+ 'Сохранить настройки':'Save settings','Ключ сохранён на колонке':'Key is stored on the speaker','Ключ ещё не задан':'No key yet','Новый ключ для замены':'New key to replace it','Вставьте ключ':'Paste the key','Новый ключ сохранится после «Сохранить настройки»':'The new key is stored when you press Save settings','Ключ удалится после «Сохранить настройки»':'The key is deleted when you press Save settings','Показать':'Show','Скрыть':'Hide','Удалить':'Delete','Где взять ключ ↗':'Where to get the key ↗','Подробнее ↗':'Learn more ↗','Скачать конфиг':'Download config','Все источники':'All sources','Источники ещё не загружены. Нажмите «Обновить каталог».':'Sources have not loaded yet. Press Refresh catalog.',
  'Некоторые источники недоступны. Подробности — в настройках.':'Some sources are unavailable. See Settings for details.',
  'Нет плагинов для выбранного источника':'No plugins in this source','Проверено владельцем источника':'Reviewed by source owner',
  'Вход в менеджер не требуется.':'No sign-in is required for this manager.','Плагин не выбран':'No plugin selected','Точное значение':'Exact value'
@@ -135,12 +135,20 @@ function detailPage(c){
  const grid=el('div','detail-grid'),form=el('form','settings-box'),values={...p.config};
  form.append(el('p','caption',t('Настройки сохраняются на колонке и остаются после перезагрузки.')));
  for(const f of p.manifest.config){
-  const field=el('div','field'),id=`config-${f.key}`,label=el('label','',text(f.label));label.htmlFor=id;field.append(label);const row=el('div','field-row');let input;
+  const field=el('div','field'),id=`config-${f.key}`,label=el('label','',text(f.label));label.htmlFor=id;field.append(label);let row=el('div','field-row'),input;
   if(f.type==='range'){
    input=el('input');input.type='range';input.id=id;input.min=f.min??0;input.max=f.max??0;input.step=f.step;input.value=values[f.key];const exact=el('input','exact-number');exact.type='number';exact.min=input.min;exact.max=input.max;exact.step=input.step;exact.value=values[f.key];exact.required=true;exact.setAttribute('aria-label',text(f.label)+' · '+t('Точное значение'));
    input.oninput=()=>{exact.value=input.value;values[f.key]=Number(input.value)};exact.oninput=()=>{values[f.key]=exact.valueAsNumber;if(exact.checkValidity())input.value=exact.value};row.append(input,exact);
   }else if(f.type==='color'){
    input=el('input');input.type='color';input.id=id;input.value=values[f.key];const exact=el('input','exact-color');exact.type='text';exact.pattern='#[0-9a-fA-F]{6}';exact.maxLength=7;exact.value=values[f.key];exact.required=true;exact.setAttribute('aria-label',text(f.label)+' HEX');input.oninput=()=>{exact.value=input.value;values[f.key]=input.value};exact.oninput=()=>{values[f.key]=exact.value;if(exact.checkValidity())input.value=exact.value};row.append(input,exact);
+  }else if(f.type==='secret'){
+   // The speaker never sends a stored secret back: null keeps it, '' deletes it.
+   const stored=!!p.secrets_set?.[f.key],status=el('div','caption secret-status',t(stored?'Ключ сохранён на колонке':'Ключ ещё не задан'));status.classList.toggle('ok',stored);values[f.key]=null;
+   input=el('input');input.type='password';input.id=id;input.maxLength=f.max_length;input.autocomplete='off';input.spellcheck=false;input.autocapitalize='off';input.placeholder=t(stored?'Новый ключ для замены':'Вставьте ключ');
+   input.oninput=()=>{input.value=input.value.replace(/\s+/g,'');values[f.key]=input.value||null;status.textContent=t(input.value?'Новый ключ сохранится после «Сохранить настройки»':stored?'Ключ сохранён на колонке':'Ключ ещё не задан')};
+   const show=el('button','quiet',t('Показать'));show.type='button';show.onclick=()=>{const hidden=input.type==='password';input.type=hidden?'text':'password';show.textContent=t(hidden?'Скрыть':'Показать')};row.append(input,show);
+   if(stored){const clear=el('button','quiet danger',t('Удалить'));clear.type='button';clear.onclick=()=>{input.value='';values[f.key]='';status.textContent=t('Ключ удалится после «Сохранить настройки»');status.classList.remove('ok')};row.append(clear)}
+   field.append(row,status);row=null;
   }else{
    input=el(f.type==='select'?'select':'input');input.id=id;
    if(f.type==='select'){for(const o of f.options){const option=el('option','',text(o.label));option.value=o.value;input.append(option)}input.value=values[f.key]}
@@ -148,11 +156,14 @@ function detailPage(c){
    else{input.type='text';input.maxLength=f.max_length;input.value=values[f.key]}
    input.oninput=()=>values[f.key]=f.type==='boolean'?input.checked:input.value;row.append(input);
   }
-  field.append(row);form.append(field);
+  if(row)field.append(row);
+  if(f.help)field.append(el('div','caption field-help',text(f.help)));
+  if(f.link){const a=el('a','field-link',t(f.type==='secret'?'Где взять ключ ↗':'Подробнее ↗'));a.href=f.link;a.target='_blank';a.rel='noopener noreferrer';field.append(a)}
+  form.append(field);
  }
  const apply=el('button','primary',t('Сохранить настройки'));apply.type='submit';form.append(apply);form.onsubmit=e=>{e.preventDefault();action(async()=>{await api(`/api/plugins/${p.manifest.id}/config`,{values});await load();toast(t('Настройки сохранены'))},apply)};
  form.append(el('div','split-line'));const controls=el('div','button-row');
- controls.append(button('Скачать конфиг',()=>{const blob=new Blob([JSON.stringify({plugin_id:p.manifest.id,version:p.manifest.version,values:p.config},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=el('a');a.href=url;a.download=p.manifest.id+'.config.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)},'secondary'));
+ controls.append(button('Скачать конфиг',()=>{const blob=new Blob([JSON.stringify({plugin_id:p.manifest.id,version:p.manifest.version,values:Object.fromEntries(Object.entries(p.config).filter(([k])=>!p.manifest.config.some(f=>f.key===k&&f.type==='secret')))},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=el('a');a.href=url;a.download=p.manifest.id+'.config.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)},'secondary'));
  if(p.previous)controls.append(button('Вернуть предыдущую версию',async()=>{if(confirm(t('Вернуть предыдущую версию и её настройки?'))){await api(`/api/plugins/${p.manifest.id}/rollback`,{permissions:p.previous.manifest.permissions});await load()}},'quiet'));
  controls.append(button('Удалить',async()=>{if(confirm(t('Удалить плагин и его настройки?'))){await api(`/api/plugins/${p.manifest.id}/remove`,{});selected='';await load()}},'quiet danger'));form.append(controls);
  form.append(el('div','metadata',`${t('Место на диске')}: ${formatBytes(p.storage_bytes||0)} · ${t('Память WASM')}: ${formatBytes(p.wasm_memory_bytes||0)}`));
@@ -198,7 +209,7 @@ function pluginPanel(p){
  const words=(ru,en)=>lang==='ru'?ru:en;
  if(ring){const speaker=makeSpeaker();speaker.querySelector('.ring').dataset.plugin=m.id;panel.append(speaker,el('h3','',words('Кольцо подсветки','LED ring')),el('p','caption',words('Живой кадр выбранного плагина. Выключенный плагин не показывает чужую подсветку.','Live frame for this plugin. Disabled plugins do not display another plugin’s LEDs.')))}
  else if(m.id==='alice-legacy-fix'){panel.append(el('div','audio-glyph','↻'),el('h3','',words('Голосовая платформа Алисы','Alice voice framework')),el('p','caption',words('Оставьте адрес комплекта пустым: колонка скачает его с GitHub. Ход подготовки и ошибки — в журнале слева.','Leave the bundle URL empty to download from GitHub. Progress and errors appear in the log.')))}
- else if(audio){panel.append(el('div','audio-glyph','♫'),el('h3','',m.id==='airplay'?words('Приёмник AirPlay','AirPlay receiver'):words('Воспроизведение звука','Audio playback')),el('strong','receiver-name',String(p.config.name||text(m.title))));if(m.id==='airplay'){panel.append(el('p','caption',words('На iPhone: Пункт управления → музыка → AirPlay.','On iPhone: Control Center → music → AirPlay.')));for(const [label,value]of [[words('Выход','Output'),p.config.device],[words('Порт','Port'),p.config.port],[words('Защита','Protection'),p.config.password?words('Пароль включён','Password enabled'):words('Без пароля','No password')]]){const row=el('div','panel-value');row.append(el('span','',label),el('strong','',String(value??'—')));panel.append(row)}}}
+ else if(audio){panel.append(el('div','audio-glyph','♫'),el('h3','',m.id==='airplay'?words('Приёмник AirPlay','AirPlay receiver'):m.id==='spotify-connect'?words('Spotify Connect','Spotify Connect'):words('Воспроизведение звука','Audio playback')),el('strong','receiver-name',String(p.config.name||text(m.title))));if(m.id==='spotify-connect'){const key=!!p.secrets_set?.['api-key'];panel.append(el('p','caption',key?words('В Spotify: значок устройств → это имя. Колонка и телефон должны быть в одной сети.','In Spotify: devices icon → this name. Speaker and phone must share a network.'):words('Сначала вставьте API-ключ Soloist в настройках слева и сохраните.','First paste your Soloist API key in the settings and save.')));const row=el('div','panel-value');row.append(el('span','',words('API-ключ','API key')),el('strong',key?'':'error',key?words('сохранён','stored'):words('не задан','missing')));panel.append(row)}if(m.id==='airplay'){panel.append(el('p','caption',words('На iPhone: Пункт управления → музыка → AirPlay.','On iPhone: Control Center → music → AirPlay.')));for(const [label,value]of [[words('Выход','Output'),p.config.device],[words('Порт','Port'),p.config.port],[words('Защита','Protection'),p.config.password?words('Пароль включён','Password enabled'):words('Без пароля','No password')]]){const row=el('div','panel-value');row.append(el('span','',label),el('strong','',String(value??'—')));panel.append(row)}}}
  else{panel.append(el('div','audio-glyph',m.capabilities?.includes('audio.capture')?'◉':'⌘'),el('h3','',text(m.title)),el('p','caption',text(m.description)));for(const cap of m.capabilities||[])panel.append(el('span','badge capability',cap))}
  const status=el('div','badge panel-status');status.dataset.panelStatus=m.id;panel.append(status);
  if(m.id==='music-ring'||m.id==='airplay'){panel.dataset.audioPanel=m.id;const bars=el('div','audio-spectrum');bars.setAttribute('aria-label',words('Уровни музыки','Music levels'));for(let i=0;i<12;i++)bars.append(el('i'));panel.append(bars);const note=el('p','caption');note.dataset.audioNote=m.id;panel.append(note)}

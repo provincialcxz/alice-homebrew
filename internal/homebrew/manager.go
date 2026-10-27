@@ -22,7 +22,27 @@ type Saved struct {
 	SourceName     string         `json:"source_name,omitempty"`
 	SourceOfficial bool           `json:"source_official,omitempty"`
 	NativeConsent  bool           `json:"native_consent,omitempty"`
+	// SecretsSet is filled only in snapshots, where secret values are
+	// blanked out: it tells the page which secrets are stored.
+	SecretsSet map[string]bool `json:"secrets_set,omitempty"`
 }
+
+// hideSecrets blanks secret values before a snapshot leaves the speaker.
+func hideSecrets(s *Saved) {
+	for _, f := range s.Manifest.Config {
+		if f.Type != "secret" {
+			continue
+		}
+		if v, _ := s.Config[f.Key].(string); v != "" {
+			if s.SecretsSet == nil {
+				s.SecretsSet = map[string]bool{}
+			}
+			s.SecretsSet[f.Key] = true
+		}
+		s.Config[f.Key] = ""
+	}
+}
+
 type Installed struct {
 	Saved
 	Enabled         bool     `json:"enabled"`
@@ -394,7 +414,22 @@ func (m *Manager) SetConfig(id string, values map[string]any) error {
 	if p == nil {
 		return errors.New("plugin not installed")
 	}
-	next, e := Config(p.Manifest, values)
+	// The page never sees stored secrets, so a missing or null secret keeps
+	// the stored one; an empty string clears it.
+	supplied := map[string]any{}
+	for k, v := range values {
+		supplied[k] = v
+	}
+	for _, f := range p.Manifest.Config {
+		if v, ok := supplied[f.Key]; f.Type == "secret" && (!ok || v == nil) {
+			if old, ok := p.Config[f.Key]; ok {
+				supplied[f.Key] = old
+			} else {
+				delete(supplied, f.Key)
+			}
+		}
+	}
+	next, e := Config(p.Manifest, supplied)
 	if e != nil {
 		return e
 	}
@@ -507,6 +542,10 @@ func (m *Manager) Snapshot() map[string]any {
 	plugins := []*Installed{}
 	for _, p := range m.state.Plugins {
 		copy := clone(p)
+		hideSecrets(&copy.Saved)
+		if copy.Previous != nil {
+			hideSecrets(copy.Previous)
+		}
 		copy.Update = m.pluginUpdateLocked(p)
 		copy.StorageBytes, copy.PreviousBytes = m.pluginBytesLocked(p)
 		if r := m.running[p.Manifest.ID]; r != nil {

@@ -1,7 +1,7 @@
 {
   "format": 1,
   "id": "spotify-connect",
-  "version": "1.0.0-beta.1",
+  "version": "2.0.0-beta.1",
   "api": 2,
   "engine": "native",
   "title": {
@@ -9,8 +9,8 @@
     "en": "Spotify Connect"
   },
   "description": {
-    "ru": "Колонка появляется в списке устройств Spotify. Звук идёт через штатный микшер Алисы. Нужен Spotify Premium.",
-    "en": "The speaker shows up as a Spotify device. Audio plays through Alice's stock mixer. Spotify Premium is required."
+    "ru": "Колонка появляется в списке устройств Spotify. Работает на официальном Spotify Soloist, звук идёт через штатный микшер Алисы. Нужны Spotify Premium и свой API-ключ Soloist.",
+    "en": "The speaker shows up as a Spotify device. Runs on Spotify's official Soloist and plays through Alice's stock mixer. Needs Spotify Premium and your own Soloist API key."
   },
   "author": "Alice Homebrew",
   "permissions": [
@@ -21,11 +21,27 @@
     "audio.playback",
     "network.listen",
     "network.multicast",
+    "network.download",
     "audio.analysis"
   ],
   "runtime_storage_bytes": 0,
   "module_sha256": "",
   "config": [
+    {
+      "key": "api-key",
+      "label": {
+        "ru": "API-ключ Spotify Soloist",
+        "en": "Spotify Soloist API key"
+      },
+      "type": "secret",
+      "default": "",
+      "max_length": 128,
+      "help": {
+        "ru": "Создайте ключ в кабинете Spotify for Developers под своим аккаунтом с Premium: «Generate API Key», затем скопируйте и вставьте сюда. Ключ хранится только на колонке и в браузер не возвращается.",
+        "en": "Create the key in the Spotify for Developers dashboard with your Premium account: Generate API Key, then copy and paste it here. The key stays on the speaker and is never sent back to the browser."
+      },
+      "link": "https://developer.spotify.com/dashboard/soloist"
+    },
     {
       "key": "name",
       "label": {
@@ -37,57 +53,16 @@
       "max_length": 32
     },
     {
-      "key": "bitrate",
-      "label": {
-        "ru": "Качество звука",
-        "en": "Audio quality"
-      },
-      "type": "select",
-      "default": "160",
-      "options": [
-        {
-          "value": "96",
-          "label": {
-            "ru": "Экономное, 96 кбит/с",
-            "en": "Data saver, 96 kbps"
-          }
-        },
-        {
-          "value": "160",
-          "label": {
-            "ru": "Обычное, 160 кбит/с",
-            "en": "Normal, 160 kbps"
-          }
-        },
-        {
-          "value": "320",
-          "label": {
-            "ru": "Высокое, 320 кбит/с",
-            "en": "High, 320 kbps"
-          }
-        }
-      ]
-    },
-    {
       "key": "initial-volume",
       "label": {
-        "ru": "Громкость при подключении, %",
-        "en": "Volume on connect, %"
+        "ru": "Громкость при первом подключении, %",
+        "en": "Volume on first connect, %"
       },
       "type": "range",
-      "default": 50,
+      "default": 40,
       "min": 0,
       "max": 100,
       "step": 1
-    },
-    {
-      "key": "normalisation",
-      "label": {
-        "ru": "Выравнивать громкость треков",
-        "en": "Normalise track loudness"
-      },
-      "type": "boolean",
-      "default": false
     },
     {
       "key": "duck-volume",
@@ -100,18 +75,6 @@
       "min": 0,
       "max": 100,
       "step": 5
-    },
-    {
-      "key": "port",
-      "label": {
-        "ru": "Порт обнаружения",
-        "en": "Discovery port"
-      },
-      "type": "range",
-      "default": 4070,
-      "min": 1024,
-      "max": 65535,
-      "step": 1
     }
   ]
 }
