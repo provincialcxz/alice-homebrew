@@ -23,7 +23,10 @@ import (
 )
 
 const UpdateInterval = 5 * time.Hour
-const updateRepository = "hertebeznat-cell/alice-homebrew"
+
+// This fork publishes its own manager builds; upstream releases do not know
+// fork-only flags such as --access-code and would break the restarted service.
+const updateRepository = "provincialcxz/alice-homebrew"
 const releaseAPI = "https://api.github.com/repos/" + updateRepository + "/releases/latest"
 const maxUpdateBinary = 32 << 20
 

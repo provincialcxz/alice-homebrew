@@ -19,20 +19,37 @@ import (
 //go:embed web/*
 var web embed.FS
 
+const (
+	maxLoginHosts = 1024
+	maxSessions   = 64
+)
+
+var errUploadBusy = errors.New("another package is being processed; retry shortly")
+
 type loginAttempt struct {
 	Count int
 	Until time.Time
 }
 type Server struct {
-	Manager  *Manager
-	Store    *Store
-	Token    string
-	mu       sync.Mutex
-	attempts map[string]loginAttempt
+	Manager *Manager
+	Store   *Store
+	Token   string
+	// AllowedHosts extends the Host names accepted besides IP literals,
+	// localhost and mDNS .local names (for example a router-provided name).
+	AllowedHosts []string
+	mu           sync.Mutex
+	attempts     map[string]loginAttempt
+	sessions     map[string]time.Time
+	uploads      chan struct{}
 }
 
 func NewServer(manager *Manager, store *Store, token string) *Server {
-	return &Server{Manager: manager, Store: store, Token: token, attempts: map[string]loginAttempt{}}
+	// Every package upload is held in memory; the speaker runs with a 64 MiB limit.
+	slots := 1
+	if store != nil {
+		slots = 2
+	}
+	return &Server{Manager: manager, Store: store, Token: token, attempts: map[string]loginAttempt{}, sessions: map[string]time.Time{}, uploads: make(chan struct{}, slots)}
 }
 func (s *Server) cookie() string {
 	if s.Store != nil {
@@ -40,17 +57,107 @@ func (s *Server) cookie() string {
 	}
 	return "alice_station_session"
 }
+func (s *Server) sessionTTL() time.Duration {
+	if s.Store != nil {
+		return time.Hour
+	}
+	return 30 * 24 * time.Hour
+}
 func (s *Server) authed(r *http.Request) bool {
 	if s.Token == "" {
 		return s.Manager != nil && s.Store == nil
 	}
-	v := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if v == "" {
-		if c, e := r.Cookie(s.cookie()); e == nil {
-			v = c.Value
+	if v, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+		return subtle.ConstantTimeCompare([]byte(v), []byte(s.Token)) == 1
+	}
+	c, e := r.Cookie(s.cookie())
+	if e != nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	until, ok := s.sessions[c.Value]
+	if ok && time.Now().After(until) {
+		delete(s.sessions, c.Value)
+		return false
+	}
+	return ok
+}
+
+// newSession issues a random cookie value so the access code itself never
+// leaves the login request and logout really ends the session.
+func (s *Server) newSession() string {
+	id := randomID()
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, until := range s.sessions {
+		if now.After(until) {
+			delete(s.sessions, k)
 		}
 	}
-	return subtle.ConstantTimeCompare([]byte(v), []byte(s.Token)) == 1
+	if len(s.sessions) >= maxSessions {
+		oldest := ""
+		for k, until := range s.sessions {
+			if oldest == "" || until.Before(s.sessions[oldest]) {
+				oldest = k
+			}
+		}
+		delete(s.sessions, oldest)
+	}
+	s.sessions[id] = now.Add(s.sessionTTL())
+	return id
+}
+
+// allowedHost rejects DNS rebinding: a hostile page that re-points its own
+// domain at the speaker still makes the browser send that domain as Host.
+func (s *Server) allowedHost(hostport string) bool {
+	host := hostport
+	if h, _, e := net.SplitHostPort(hostport); e == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	if i := strings.IndexByte(host, '%'); i >= 0 {
+		host = host[:i]
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "" {
+		return false
+	}
+	if net.ParseIP(host) != nil || host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") {
+		return true
+	}
+	for _, allowed := range s.AllowedHosts {
+		if host == strings.TrimSuffix(strings.ToLower(allowed), ".") {
+			return true
+		}
+	}
+	return false
+}
+func (s *Server) uploadSlot() (func(), error) {
+	select {
+	case s.uploads <- struct{}{}:
+		return func() { <-s.uploads }, nil
+	default:
+		return nil, errUploadBusy
+	}
+}
+
+// loginKey groups IPv6 clients by /64 so one network cannot rotate addresses
+// to escape the login limit.
+func loginKey(remote string) string {
+	host, _, e := net.SplitHostPort(remote)
+	if e != nil {
+		host = remote
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return host
+	}
+	if ip.To4() == nil {
+		return ip.Mask(net.CIDRMask(64, 128)).String()
+	}
+	return ip.String()
 }
 func jsonResponse(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -64,6 +171,12 @@ func errorResponse(w http.ResponseWriter, e error, status int) {
 		w.WriteHeader(http.StatusInsufficientStorage)
 		json.NewEncoder(w).Encode(map[string]any{"error": e.Error(), "code": "insufficient_storage", "details": storage.Plan})
 		return
+	}
+	var tooLarge *http.MaxBytesError
+	if errors.Is(e, errUploadBusy) {
+		status = http.StatusServiceUnavailable
+	} else if errors.As(e, &tooLarge) {
+		status = http.StatusRequestEntityTooLarge
 	}
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"error": e.Error()})
@@ -86,6 +199,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+	if !s.allowedHost(r.Host) {
+		errorResponse(w, errors.New("unexpected Host header; open the manager by IP address or add --allowed-host"), 403)
+		return
+	}
 	if r.Method != "GET" && r.Method != "HEAD" {
 		if origin := r.Header.Get("Origin"); origin != "" {
 			u, e := url.Parse(origin)
@@ -168,6 +285,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.URL.Path == "/api/submit" && r.Method == "POST" {
+			release, e := s.uploadSlot()
+			if e != nil {
+				errorResponse(w, e, 503)
+				return
+			}
+			defer release()
 			raw, e := packageBody(w, r)
 			if e != nil {
 				errorResponse(w, e, 400)
@@ -187,6 +310,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/api/logout" && r.Method == "POST" {
+		if c, e := r.Cookie(s.cookie()); e == nil {
+			s.mu.Lock()
+			delete(s.sessions, c.Value)
+			s.mu.Unlock()
+		}
 		http.SetCookie(w, &http.Cookie{Name: s.cookie(), Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 		jsonResponse(w, map[string]bool{"ok": true})
 		return
@@ -202,11 +330,29 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if s.Token == "" {
+		errorResponse(w, errors.New("access code is not configured"), 400)
+		return
+	}
+	host := loginKey(r.RemoteAddr)
+	now := time.Now()
 	s.mu.Lock()
-	a := s.attempts[host]
-	if time.Now().After(a.Until) {
-		a = loginAttempt{Until: time.Now().Add(5 * time.Minute)}
+	a, tracked := s.attempts[host]
+	if !tracked && len(s.attempts) >= maxLoginHosts {
+		for k, v := range s.attempts {
+			if now.After(v.Until) {
+				delete(s.attempts, k)
+			}
+		}
+		// Fail closed instead of forgetting active counters.
+		if len(s.attempts) >= maxLoginHosts {
+			s.mu.Unlock()
+			errorResponse(w, errors.New("too many login attempts; retry in 5 minutes"), 429)
+			return
+		}
+	}
+	if now.After(a.Until) {
+		a = loginAttempt{Until: now.Add(5 * time.Minute)}
 	}
 	if a.Count >= 8 {
 		s.mu.Unlock()
@@ -214,9 +360,6 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Count++
-	if len(s.attempts) > 1024 {
-		s.attempts = map[string]loginAttempt{}
-	}
 	s.attempts[host] = a
 	s.mu.Unlock()
 	var q struct {
@@ -233,7 +376,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	delete(s.attempts, host)
 	s.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: s.cookie(), Value: s.Token, Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: 3600})
+	http.SetCookie(w, &http.Cookie{Name: s.cookie(), Value: s.newSession(), Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: int(s.sessionTTL() / time.Second)})
 	jsonResponse(w, map[string]bool{"ok": true})
 }
 func (s *Server) stationRequest(w http.ResponseWriter, r *http.Request) error {
@@ -367,6 +510,11 @@ func (s *Server) stationRequest(w http.ResponseWriter, r *http.Request) error {
 		jsonResponse(w, m.Ring.Snapshot())
 		return nil
 	case r.URL.Path == "/api/inspect" && r.Method == "POST":
+		release, e := s.uploadSlot()
+		if e != nil {
+			return e
+		}
+		defer release()
 		raw, e := packageBody(w, r)
 		if e != nil {
 			return e
@@ -385,6 +533,11 @@ func (s *Server) stationRequest(w http.ResponseWriter, r *http.Request) error {
 		if e := requestJSON(w, r, &q); e != nil {
 			return e
 		}
+		release, e := s.uploadSlot()
+		if e != nil {
+			return e
+		}
+		defer release()
 		v, e := m.FetchURL(r.Context(), q.URL, q.SHA256)
 		if e != nil {
 			return e
@@ -430,6 +583,11 @@ func (s *Server) stationRequest(w http.ResponseWriter, r *http.Request) error {
 		if e := requestJSON(w, r, &q); e != nil {
 			return e
 		}
+		release, e := s.uploadSlot()
+		if e != nil {
+			return e
+		}
+		defer release()
 		v, e := m.StageFrom(r.Context(), q.SourceID, q.SHA256)
 		if e != nil {
 			return e
@@ -445,13 +603,17 @@ func (s *Server) stationRequest(w http.ResponseWriter, r *http.Request) error {
 		switch action {
 		case "update":
 			var q struct {
-				Ticket string `json:"ticket"`
-				ExpectedSHA string `json:"expected_sha256"`
+				Ticket      string   `json:"ticket"`
+				ExpectedSHA string   `json:"expected_sha256"`
 				Permissions []string `json:"permissions"`
-				Acknowledge bool `json:"acknowledge_permissions"`
+				Acknowledge bool     `json:"acknowledge_permissions"`
 			}
-			if e := requestJSON(w, r, &q); e != nil { return e }
-			if e := m.InstallUpdate(q.Ticket, id, q.ExpectedSHA, q.Permissions, q.Acknowledge); e != nil { return e }
+			if e := requestJSON(w, r, &q); e != nil {
+				return e
+			}
+			if e := m.InstallUpdate(q.Ticket, id, q.ExpectedSHA, q.Permissions, q.Acknowledge); e != nil {
+				return e
+			}
 		case "enable":
 			var q struct {
 				Enabled           bool `json:"enabled"`

@@ -26,6 +26,7 @@ def main(argv=None,log=print):
     parser.add_argument('--binary',type=Path,default=binary)
     parser.add_argument('--install',action='store_true')
     parser.add_argument('--autostart',action='store_true')
+    parser.add_argument('--access-code',action='store_true',help='require an access code to open the manager')
     args=parser.parse_args(argv)
     if args.autostart and not args.install: parser.error('--autostart requires --install')
     try:
@@ -92,22 +93,34 @@ def main(argv=None,log=print):
                 shell(f'cp {root}/S98alice-homebrew /etc/init.d/S98alice-homebrew && chmod 755 /etc/init.d/S98alice-homebrew && sync')
             finally:
                 shell('mount -o remount,ro /')
+        # The marker survives manager self-updates; start.sh turns it into --access-code.
+        shell(f'touch {root}/access-code.enabled' if args.access_code else f'rm -f {root}/access-code.enabled')
         shell(root+'/start.sh start')
         port=run(target+['forward','tcp:0','tcp:8088'])
         if not port.isdigit(): raise RuntimeError('Could not create a temporary health-check tunnel')
+        health={}
         for _ in range(20):
             try:
                 with urllib.request.urlopen('http://127.0.0.1:'+port+'/api/about',timeout=2) as response:
                     health=json.load(response)
-                if health.get('mode')=='station' and health.get('access_code_required') is False: break
+                if health.get('mode')=='station' and health.get('access_code_required') is args.access_code: break
             except (OSError,ValueError): pass
             time.sleep(.5)
-        else: raise RuntimeError('Service did not become ready; read /data/alice-homebrew/service.log')
+        else:
+            if args.access_code and health.get('mode')=='station':
+                raise RuntimeError('The installed Homebrew does not support access codes; install a newer Homebrew build')
+            raise RuntimeError('Service did not become ready; read /data/alice-homebrew/service.log')
         network=shell('ip -4 addr show wlan0')
         addresses=re.findall(r'inet (\d+\.\d+\.\d+\.\d+)/',network)
         address=addresses[0] if addresses else 'SPEAKER_IP'
         url=f'http://{address}:8088'
-        log(f'Open {url} in your browser. No access code is required.')
+        if args.access_code:
+            code=shell(f'cat {root}/state/admin-token.txt')
+            if not re.fullmatch(r'[0-9a-f]{48}',code): raise RuntimeError('Could not read the Homebrew access code')
+            log(f'Open {url} in your browser.')
+            log('Homebrew access code: '+code)
+        else:
+            log(f'Open {url} in your browser. No access code is required.')
         return url
     finally:
         # Cleanup must not hide a USB error or timeout from the actual operation.
