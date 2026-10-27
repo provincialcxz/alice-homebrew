@@ -1,6 +1,4 @@
-//go:build airplay
-
-package main
+package sharedaudio
 
 import (
 	"encoding/binary"

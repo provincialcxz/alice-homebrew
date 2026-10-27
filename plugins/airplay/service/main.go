@@ -5,6 +5,7 @@
 package main
 
 import (
+	"alicehomebrew/plugins/internal/sharedaudio"
 	"bytes"
 	_ "embed"
 	"encoding/json"
@@ -141,7 +142,7 @@ func run() error {
 	if c.AudioMode == "direct" {
 		cmd.Stdout = os.Stdout
 	} else {
-		shared, err := newSharedPlayback(root)
+		shared, err := sharedaudio.New(root)
 		if err != nil {
 			return err
 		}

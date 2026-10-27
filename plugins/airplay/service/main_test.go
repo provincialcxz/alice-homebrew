@@ -7,6 +7,23 @@ import (
 	"testing"
 )
 
+func TestSharedConfigAndDirectOptIn(t *testing.T) {
+	c := configuration{Name: "Mini", Device: "plughw:0,0", Port: 7000, MaxVolume: -10}
+	text, e := configText(c)
+	if e != nil || !strings.Contains(text, `output_backend = "stdout"`) || !strings.Contains(text, `output_format = "S16"`) {
+		t.Fatal(text, e)
+	}
+	c.AudioMode = "direct"
+	text, e = configText(c)
+	if e != nil || !strings.Contains(text, `output_backend = "alsa"`) || !strings.Contains(text, `disable_standby_mode = "never"`) {
+		t.Fatal(text, e)
+	}
+	c.AudioMode = "unknown"
+	if _, e = configText(c); e == nil {
+		t.Fatal("unknown mode accepted")
+	}
+}
+
 func TestConfigAndDescriptor(t *testing.T) {
 	c := configuration{Name: "Mini \"Room\"", Device: "plughw:0,0", MaxVolume: -10, Port: 7000}
 	s, e := configText(c)

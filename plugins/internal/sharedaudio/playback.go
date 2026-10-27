@@ -1,6 +1,8 @@
-//go:build airplay
-
-package main
+// Package sharedaudio plays 44.1 kHz stereo S16_LE PCM through the firmware's
+// own aplay and dmix mixer, so plugin audio plays alongside Alice instead of
+// taking the sound card away from her, and reports levels for audio.levels.
+// It is shared by the AirPlay and Spotify Connect plugins.
+package sharedaudio
 
 import (
 	"errors"
@@ -24,7 +26,7 @@ pcm.alice_shared {
 
 // Use the firmware's aplay and libasound together. Its dmix shared-memory ABI
 // must match Alice's library; mixing it with the embedded modern ALSA is unsafe.
-func newSharedPlayback(root string) (*sharedPlayback, error) {
+func New(root string) (*Playback, error) {
 	for _, path := range []string{"/system/workdir/bin/aplay", "/system/vendor/quasar/libs/libasound.so.2", "/usr/share/alsa/alsa.conf"} {
 		if _, err := os.Stat(path); err != nil {
 			return nil, fmt.Errorf("shared Alice audio requires firmware file %s: %w", path, err)
@@ -34,7 +36,7 @@ func newSharedPlayback(root string) (*sharedPlayback, error) {
 	if err := os.WriteFile(config, []byte(sharedALSAConfig), 0600); err != nil {
 		return nil, err
 	}
-	p := &sharedPlayback{done: make(chan struct{})}
+	p := &Playback{done: make(chan struct{})}
 	p.open = func() (io.WriteCloser, error) {
 		// The firmware creates this route during boot. Refuse an exclusive
 		// hardware fallback if the shared route is not ready.
@@ -91,7 +93,7 @@ func (p *stockPlayer) Close() error {
 	return err
 }
 
-type sharedPlayback struct {
+type Playback struct {
 	mu     sync.Mutex
 	open   func() (io.WriteCloser, error)
 	sink   io.WriteCloser
@@ -102,7 +104,7 @@ type sharedPlayback struct {
 	closed bool
 }
 
-func (p *sharedPlayback) Write(b []byte) (int, error) {
+func (p *Playback) Write(b []byte) (int, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
@@ -126,7 +128,7 @@ func (p *sharedPlayback) Write(b []byte) (int, error) {
 	return n, err
 }
 
-func (p *sharedPlayback) releaseIdle(now time.Time) {
+func (p *Playback) releaseIdle(now time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.sink != nil && now.Sub(p.last) >= 2*time.Second {
@@ -135,7 +137,7 @@ func (p *sharedPlayback) releaseIdle(now time.Time) {
 	}
 }
 
-func (p *sharedPlayback) releaseLoop() {
+func (p *Playback) releaseLoop() {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -148,7 +150,7 @@ func (p *sharedPlayback) releaseLoop() {
 	}
 }
 
-func (p *sharedPlayback) Close() error {
+func (p *Playback) Close() error {
 	p.once.Do(func() {
 		p.mu.Lock()
 		defer p.mu.Unlock()
