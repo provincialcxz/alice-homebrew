@@ -35,6 +35,7 @@ case "${1:-start}" in
     set -- station --listen :8088 --data "$BASE/state" --hardware-led --managed
     # Station Mini Root creates this marker when "Protect with an access code" is chosen.
     if [ -f "$BASE/access-code.enabled" ]; then set -- "$@" --access-code; fi
+    if [ -f "$BASE/button-confirm.enabled" ]; then set -- "$@" --button-confirm; fi
     setsid "$BASE/alice-homebrew" "$@" \
       </dev/null >"$BASE/service.log" 2>&1 &
     echo "$!" > "$PID"

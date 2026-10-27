@@ -110,6 +110,7 @@ func run() error {
 	managed := flags.Bool("managed", false, "managed Linux service: automatic manager updates and restart")
 	accessCode := flags.Bool("access-code", false, "station: require the access code from DATA/admin-token.txt")
 	allowedHosts := flags.String("allowed-host", "", "comma-separated host names accepted besides IP addresses, localhost and .local")
+	buttonConfirm := flags.Bool("button-confirm", false, "station: require a speaker button press before a native plugin starts")
 	if e := flags.Parse(os.Args[2:]); e != nil {
 		return e
 	}
@@ -139,6 +140,10 @@ func run() error {
 		manager.Updater, e = homebrew.NewUpdater(*data, *listen, *managed)
 		if e != nil {
 			return e
+		}
+		if *buttonConfirm {
+			manager.Button = homebrew.NewButtonGate(manager.Ring)
+			go manager.Button.Listen(ctx)
 		}
 		go func() { defer close(managerDone); manager.Run(ctx) }()
 		go manager.Updater.Run(ctx)

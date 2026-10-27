@@ -63,7 +63,9 @@ type Manager struct {
 	catalogs        map[string]*Catalog
 	diskProbe       func(string) DiskUsage
 	Updater         *Updater
-	ready           bool
+	// Button, when set, must be pressed before a native plugin starts from a web request.
+	Button *ButtonGate
+	ready  bool
 }
 
 func NewManager(dir string, hardware, allowLocal bool) (*Manager, error) {
@@ -329,6 +331,22 @@ func (m *Manager) stop(id string) {
 		}
 		delete(m.running, id)
 	}
+}
+
+// startsNative reports whether enabling plugin id, or applying update ticket to
+// it, would launch native code from a web request.
+func (m *Manager) startsNative(id, ticket string, enabling bool) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p := m.state.Plugins[id]
+	if p == nil {
+		return false
+	}
+	if enabling {
+		return !p.Enabled && p.Manifest.Engine == "native"
+	}
+	t, ok := m.tickets[ticket]
+	return p.Enabled && ok && t.Package.Manifest.Engine == "native"
 }
 func (m *Manager) Enable(id string, enable bool) error {
 	return m.EnableWithConsent(id, enable, false)

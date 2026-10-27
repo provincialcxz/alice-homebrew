@@ -134,6 +134,12 @@ func (s *Server) allowedHost(hostport string) bool {
 	}
 	return false
 }
+func (s *Server) confirmButton(ctx context.Context, needed bool, label string) error {
+	if !needed || s.Manager == nil || s.Manager.Button == nil {
+		return nil
+	}
+	return s.Manager.Button.Wait(ctx, label)
+}
 func (s *Server) uploadSlot() (func(), error) {
 	select {
 	case s.uploads <- struct{}{}:
@@ -175,6 +181,10 @@ func errorResponse(w http.ResponseWriter, e error, status int) {
 	var tooLarge *http.MaxBytesError
 	if errors.Is(e, errUploadBusy) {
 		status = http.StatusServiceUnavailable
+	} else if errors.Is(e, errButtonPending) {
+		status = http.StatusConflict
+	} else if errors.Is(e, errButtonTimeout) {
+		status = http.StatusRequestTimeout
 	} else if errors.As(e, &tooLarge) {
 		status = http.StatusRequestEntityTooLarge
 	}
@@ -246,12 +256,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			pub = s.Store.PublicKey()
 		}
 		ready := false
+		var button map[string]any
 		if s.Manager != nil {
 			s.Manager.mu.Lock()
 			ready = s.Manager.ready
 			s.Manager.mu.Unlock()
+			if s.Manager.Button != nil {
+				button = s.Manager.Button.Status()
+			}
 		}
-		jsonResponse(w, map[string]any{"mode": mode, "authenticated": s.authed(r), "access_code_required": s.Token != "", "public_key": pub, "version": Version, "ready": ready})
+		jsonResponse(w, map[string]any{"mode": mode, "authenticated": s.authed(r), "access_code_required": s.Token != "", "public_key": pub, "version": Version, "ready": ready, "button_confirm": button != nil, "button": button})
 		return
 	}
 	if r.URL.Path == "/api/login" && r.Method == "POST" {
@@ -611,6 +625,9 @@ func (s *Server) stationRequest(w http.ResponseWriter, r *http.Request) error {
 			if e := requestJSON(w, r, &q); e != nil {
 				return e
 			}
+			if e := s.confirmButton(r.Context(), m.startsNative(id, q.Ticket, false), "update "+id); e != nil {
+				return e
+			}
 			if e := m.InstallUpdate(q.Ticket, id, q.ExpectedSHA, q.Permissions, q.Acknowledge); e != nil {
 				return e
 			}
@@ -621,6 +638,11 @@ func (s *Server) stationRequest(w http.ResponseWriter, r *http.Request) error {
 			}
 			if e := requestJSON(w, r, &q); e != nil {
 				return e
+			}
+			if q.Enabled && q.AcknowledgeNative {
+				if e := s.confirmButton(r.Context(), m.startsNative(id, "", true), "enable "+id); e != nil {
+					return e
+				}
 			}
 			if e := m.EnableWithConsent(id, q.Enabled, q.AcknowledgeNative); e != nil {
 				return e
