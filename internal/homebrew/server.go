@@ -273,10 +273,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.Store != nil {
-		if (r.URL.Path == "/catalog/v1.json" || r.URL.Path == "/catalog/v2.json") && r.Method == "GET" {
+		if (r.URL.Path == "/catalog/v1.json" || r.URL.Path == "/catalog/v2.json" || r.URL.Path == "/catalog/v3.json") && r.Method == "GET" {
 			maxAPI := 1
 			if r.URL.Path == "/catalog/v2.json" {
 				maxAPI = 2
+			} else if r.URL.Path == "/catalog/v3.json" {
+				maxAPI = 3
 			}
 			v, e := s.Store.CatalogFor(maxAPI)
 			if e != nil {

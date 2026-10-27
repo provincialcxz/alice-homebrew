@@ -157,7 +157,7 @@ func TestHostPermissionsAndMemoryBounds(t *testing.T) {
 			m.Permissions = []string{"led.ring"}
 		}
 		p := &Package{Manifest: m, Module: ledWasm(tc.ptr)}
-		r, e := NewRunner(p, map[string]any{})
+		r, e := NewRunner(p, map[string]any{}, RunnerEnv{})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -170,7 +170,7 @@ func TestHostPermissionsAndMemoryBounds(t *testing.T) {
 }
 func TestInfiniteLoopTerminates(t *testing.T) {
 	p := &Package{Manifest: manifest("1.0.0"), Module: minimalWasm(true)}
-	r, e := NewRunner(p, nil)
+	r, e := NewRunner(p, nil, RunnerEnv{})
 	if e != nil {
 		t.Fatal(e)
 	}

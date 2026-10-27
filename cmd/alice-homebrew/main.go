@@ -143,7 +143,7 @@ func run() error {
 		}
 		if *buttonConfirm {
 			manager.Button = homebrew.NewButtonGate(manager.Ring)
-			go manager.Button.Listen(ctx)
+			manager.Inputs.Gate = manager.Button
 		}
 		go func() { defer close(managerDone); manager.Run(ctx) }()
 		go manager.Updater.Run(ctx)

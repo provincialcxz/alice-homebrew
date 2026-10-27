@@ -22,7 +22,14 @@ func (s *Store) Export(out io.Writer, repository string) error {
 		return e
 	}
 	raw, _ := json.MarshalIndent(env, "", "  ")
-	catalog, e := VerifyCatalog(raw, s.PublicKey(), 0)
+	// v3 lists every package, including API 3 WASM plugins hidden from older
+	// managers by v1/v2; the exported package files follow it.
+	full, e := s.CatalogFor(3)
+	if e != nil {
+		return e
+	}
+	fullRaw, _ := json.MarshalIndent(full, "", "  ")
+	catalog, e := VerifyCatalog(fullRaw, s.PublicKey(), 0)
 	if e != nil {
 		return e
 	}
@@ -55,13 +62,16 @@ func (s *Store) Export(out io.Writer, repository string) error {
 	if e = add("docs/catalog/v2.json", raw); e != nil {
 		return e
 	}
+	if e = add("docs/catalog/v3.json", fullRaw); e != nil {
+		return e
+	}
 	if e = add("docs/public-key.txt", []byte(s.PublicKey()+"\n")); e != nil {
 		return e
 	}
 	if e = add("docs/.nojekyll", nil); e != nil {
 		return e
 	}
-	site, _ := json.Marshal(map[string]string{"repository": repository, "catalog": "catalog/v2.json"})
+	site, _ := json.Marshal(map[string]string{"repository": repository, "catalog": "catalog/v3.json"})
 	if e = add("docs/site.json", site); e != nil {
 		return e
 	}

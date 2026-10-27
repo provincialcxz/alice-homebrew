@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "id": "alice.sound-ring",
+  "version": "1.0.0",
+  "title": {"ru": "Звуковое кольцо", "en": "Sound Ring"},
+  "description": {"ru": "Кольцо реагирует на играющую музыку без root. Кнопка переключает спектр и пульс, ладонь над колонкой приглушает свет.", "en": "The ring follows playing music without root. A button switches spectrum and pulse; a hand above the speaker dims the light."},
+  "author": "Alice Homebrew",
+  "api": 3,
+  "permissions": ["led.ring", "audio.levels", "input.buttons", "sensor.proximity"],
+  "config": [
+    {"key": "color", "label": {"ru": "Цвет", "en": "Color"}, "type": "color", "default": "#5ac8fa"},
+    {"key": "brightness", "label": {"ru": "Яркость, %", "en": "Brightness, %"}, "type": "range", "default": 40, "min": 0, "max": 100, "step": 1},
+    {"key": "near", "label": {"ru": "Порог датчика (единицы драйвера)", "en": "Sensor threshold (driver units)"}, "type": "range", "default": 100, "min": 10, "max": 1000, "step": 10}
+  ],
+  "module_sha256": ""
+}

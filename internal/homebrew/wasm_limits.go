@@ -6,6 +6,8 @@ import (
 	"fmt"
 )
 
+var hostImports = map[string]bool{"config_number": true, "config_string": true, "led_write": true, "log": true, "button_event": true, "proximity": true, "audio_levels": true}
+
 // Bound declarations before handing untrusted modules to the runtime. Linear
 // memory limits alone do not constrain function tables or parser allocations.
 type wasmReader struct {
@@ -115,7 +117,8 @@ func wasmLimits(module []byte) error {
 				if e != nil {
 					return e
 				}
-				if namespace != "alice" || kind != 0 || (name != "config_number" && name != "config_string" && name != "led_write" && name != "log") {
+				// API 3 imports are permission-checked on every call by the runtime.
+				if namespace != "alice" || kind != 0 || !hostImports[name] {
 					return fmt.Errorf("import is not allowed: %s.%s", namespace, name)
 				}
 				if _, e = part.u32(); e != nil {

@@ -171,6 +171,13 @@ func (m *Manager) PreviewSource(ctx context.Context, raw, key, name string) (Sou
 	if e != nil {
 		return Source{}, nil, e
 	}
+	if v3 := catalogV3(normalized); v3 != "" {
+		if b, err := m.download(ctx, v3, origin, 2<<20); err == nil {
+			if full, err := VerifyCatalog(b, key, c.Revision); err == nil {
+				c = full
+			}
+		}
+	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = origin.Hostname()
@@ -268,13 +275,9 @@ func (m *Manager) RefreshSource(ctx context.Context, id string) error {
 	s := clone(*item)
 	m.mu.Unlock()
 	origin, e := m.storeURL(s.URL)
-	var raw []byte
 	var c Catalog
 	if e == nil {
-		raw, e = m.download(ctx, s.URL, origin, 2<<20)
-	}
-	if e == nil {
-		c, e = VerifyCatalog(raw, s.Key, s.Revision)
+		c, e = m.fetchCatalog(ctx, s.URL, origin, s.Key, s.Revision)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -309,6 +312,33 @@ func (m *Manager) RefreshSource(ctx context.Context, id string) error {
 	m.CatalogError = ""
 	m.rebuildCatalogLocked()
 	return nil
+}
+
+// catalogV3 maps a stored .../v2.json source to its v3 sibling, which also
+// lists API 3 WASM plugins. Sources stay saved as v2 so older managers keep
+// working after a downgrade.
+func catalogV3(raw string) string {
+	if strings.HasSuffix(raw, "/v2.json") {
+		return strings.TrimSuffix(raw, "v2.json") + "v3.json"
+	}
+	return ""
+}
+
+// fetchCatalog prefers v3 and falls back to the stored URL when a source does
+// not publish v3 or its v3 does not verify.
+func (m *Manager) fetchCatalog(ctx context.Context, raw string, origin *url.URL, key string, minRevision uint64) (Catalog, error) {
+	if v3 := catalogV3(raw); v3 != "" {
+		if b, e := m.download(ctx, v3, origin, 2<<20); e == nil {
+			if c, e := VerifyCatalog(b, key, minRevision); e == nil {
+				return c, nil
+			}
+		}
+	}
+	b, e := m.download(ctx, raw, origin, 2<<20)
+	if e != nil {
+		return Catalog{}, e
+	}
+	return VerifyCatalog(b, key, minRevision)
 }
 func (m *Manager) RefreshAll(ctx context.Context) error {
 	m.mu.Lock()

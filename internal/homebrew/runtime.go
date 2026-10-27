@@ -2,8 +2,10 @@ package homebrew
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -21,6 +23,15 @@ type Runner struct {
 	frames   int
 	hostErr  error
 	Logs     []string
+	env      RunnerEnv
+	keys     int
+}
+
+// RunnerEnv carries the read-only speaker data offered to API 3 permissions.
+// Either field may be nil, for example while a package is only validated.
+type RunnerEnv struct {
+	Inputs *Inputs
+	Audio  *AudioMeter
 }
 type PluginRunner interface {
 	Tick(map[string]any, uint32) ([]byte, error)
@@ -37,11 +48,11 @@ func (r *Runner) MemoryBytes() uint32 {
 	return 0
 }
 
-func NewRunner(p *Package, config map[string]any) (*Runner, error) {
+func NewRunner(p *Package, config map[string]any, env RunnerEnv) (*Runner, error) {
 	if e := wasmLimits(p.Module); e != nil {
 		return nil, e
 	}
-	r := &Runner{manifest: p.Manifest, config: config}
+	r := &Runner{manifest: p.Manifest, config: config, env: env}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	r.rt = wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigInterpreter().WithMemoryLimitPages(32).WithCloseOnContextDone(true).WithDebugInfoEnabled(false))
@@ -105,6 +116,60 @@ func NewRunner(p *Package, config map[string]any) (*Runner, error) {
 			r.Logs = r.Logs[len(r.Logs)-32:]
 		}
 	}).Export("log")
+	// button_event(out) writes 8 bytes: code u16, value u8 (1 press, 0 release,
+	// 2 repeat), reserved u8, milliseconds u32. Returns 1 when an event was read.
+	host.NewFunctionBuilder().WithFunc(func(_ context.Context, m api.Module, out uint32) uint32 {
+		if !r.allowed("input.buttons") || r.env.Inputs == nil {
+			return 0
+		}
+		if r.keys == 0 {
+			r.keys = r.env.Inputs.Subscribe()
+		}
+		ev, ok := r.env.Inputs.NextKey(r.keys)
+		if !ok {
+			return 0
+		}
+		var b [8]byte
+		binary.LittleEndian.PutUint16(b[0:], ev.Code)
+		b[2] = ev.Value
+		binary.LittleEndian.PutUint32(b[4:], ev.Millis)
+		if m.Memory() == nil || !m.Memory().Write(out, b[:]) {
+			r.hostErr = errors.New("button buffer is outside WebAssembly memory")
+			return 0
+		}
+		return 1
+	}).Export("button_event")
+	// proximity() returns the last sensor distance, or -1 without data.
+	host.NewFunctionBuilder().WithFunc(func(context.Context, api.Module) float64 {
+		if !r.allowed("sensor.proximity") || r.env.Inputs == nil {
+			return -1
+		}
+		return r.env.Inputs.Proximity()
+	}).Export("proximity")
+	// audio_levels(out) writes 14 f32: RMS, peak and 12 bands of what is playing.
+	// Returns 1 while fresh levels exist; otherwise the buffer is zeroed.
+	host.NewFunctionBuilder().WithFunc(func(_ context.Context, m api.Module, out uint32) uint32 {
+		if !r.allowed("audio.levels") {
+			return 0
+		}
+		var levels AudioLevels
+		if r.env.Audio != nil {
+			levels = r.env.Audio.Snapshot()
+		}
+		var b [56]byte
+		values := append([]float64{levels.RMS, levels.Peak}, levels.Bands[:]...)
+		for i, v := range values {
+			binary.LittleEndian.PutUint32(b[i*4:], math.Float32bits(float32(v)))
+		}
+		if m.Memory() == nil || !m.Memory().Write(out, b[:]) {
+			r.hostErr = errors.New("audio buffer is outside WebAssembly memory")
+			return 0
+		}
+		if levels.Available {
+			return 1
+		}
+		return 0
+	}).Export("audio_levels")
 	if _, err := host.Instantiate(ctx); err != nil {
 		return fail(err)
 	}
@@ -128,6 +193,15 @@ func NewRunner(p *Package, config map[string]any) (*Runner, error) {
 	r.pending = nil
 	r.frames = 0
 	return r, nil
+}
+
+// allowed stops the plugin, like led_write does, when a permission is missing.
+func (r *Runner) allowed(permission string) bool {
+	if Has(r.manifest, permission) {
+		return true
+	}
+	r.hostErr = errors.New("permission denied: " + permission)
+	return false
 }
 func (r *Runner) read(m api.Module, ptr, n, limit uint32) (string, bool) {
 	if n > limit || m.Memory() == nil {
@@ -156,9 +230,15 @@ func (r *Runner) Tick(config map[string]any, now uint32) ([]byte, error) {
 	}
 	return append([]byte(nil), r.pending...), nil
 }
-func (r *Runner) Close() { r.rt.Close(context.Background()) }
+func (r *Runner) Close() {
+	if r.keys != 0 {
+		r.env.Inputs.Unsubscribe(r.keys)
+	}
+	r.rt.Close(context.Background())
+}
 
-// ABI stays small: only the two documented permissions can cause effects.
+// ABI stays small: only led.ring and log.write cause effects; API 3 adds
+// read-only inputs (buttons, proximity, played audio levels).
 func ValidateModule(p *Package) error {
 	if p.Manifest.Engine == "native" {
 		return validateELF(p.Module)
@@ -167,7 +247,7 @@ func ValidateModule(p *Package) error {
 	if e != nil {
 		return e
 	}
-	r, e := NewRunner(p, c)
+	r, e := NewRunner(p, c, RunnerEnv{})
 	if e != nil {
 		return e
 	}

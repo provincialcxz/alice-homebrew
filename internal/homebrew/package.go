@@ -20,7 +20,11 @@ const MaxPackage = 16 << 20
 const MaxWASMPackage = 4 << 20
 const MaxModule = 2 << 20
 const MaxNativeModule = 24 << 20
-const APIVersion = 2
+const APIVersion = 3
+
+// API 3 WASM permissions read speaker inputs without full root. They never
+// expose the microphone: audio.levels only summarizes what is being played.
+var sensorPermissions = map[string]bool{"input.buttons": true, "sensor.proximity": true, "audio.levels": true}
 
 var idRE = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$`)
 var versionRE = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$`)
@@ -81,11 +85,11 @@ func decode(data []byte, dst any) error {
 	return nil
 }
 func ValidateManifest(m Manifest) error {
-	if m.Format != 1 || (m.API != 1 && m.API != 2) || len(m.ID) > 64 || len(m.ID) < 3 || !idRE.MatchString(m.ID) || !versionRE.MatchString(m.Version) {
+	if m.Format != 1 || m.API < 1 || m.API > 3 || len(m.ID) > 64 || len(m.ID) < 3 || !idRE.MatchString(m.ID) || !versionRE.MatchString(m.Version) {
 		return errors.New("unsupported manifest format, ID, version or API")
 	}
 	if (m.Engine != "" && m.Engine != "native") || (m.Engine == "native") != (m.API == 2) {
-		return errors.New("native plugins require API 2; WASM plugins use API 1")
+		return errors.New("native plugins require API 2; WASM plugins use API 1 or 3")
 	}
 	if m.RuntimeStorage > 64<<20 || (m.Engine != "native" && m.RuntimeStorage != 0) {
 		return errors.New("invalid native runtime storage allowance")
@@ -109,7 +113,7 @@ func ValidateManifest(m Manifest) error {
 	}
 	seen := map[string]bool{}
 	for _, p := range m.Permissions {
-		if seen[p] || (p != "led.ring" && p != "log.write" && !(m.Engine == "native" && p == "system.full-access")) {
+		if seen[p] || !(p == "led.ring" || p == "log.write" || (m.Engine == "native" && p == "system.full-access") || (m.API == 3 && sensorPermissions[p])) {
 			return fmt.Errorf("unsupported or duplicate permission: %s", p)
 		}
 		seen[p] = true
