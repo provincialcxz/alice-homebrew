@@ -62,8 +62,27 @@ func TestOfficialSourceRequiresKnownAddressAndPinnedKey(t *testing.T) {
 		t.Fatal(normalized, e)
 	}
 	m := manager(t)
-	if len(m.state.Sources) != 1 || !m.state.Sources[0].Official {
-		t.Fatal("official source was not preconfigured")
+	if len(m.state.Sources) != 2 || m.state.Sources[0].ID != "official" || m.state.Sources[1].ID != "fork" || !m.state.Sources[0].Official || !m.state.Sources[1].Official {
+		t.Fatal("built-in sources were not preconfigured", m.state.Sources)
+	}
+	// Each built-in URL keeps its own pinned key; keys are not interchangeable.
+	if !officialSource(ForkCatalogURL, ForkCatalogKey) || officialSource(ForkCatalogURL, OfficialCatalogKey) || officialSource(OfficialCatalogURL, ForkCatalogKey) {
+		t.Fatal("built-in keys are interchangeable")
+	}
+	if _, _, e := m.PreviewSource(context.Background(), "https://github.com/provincialcxz/alice-homebrew", OfficialCatalogKey, ""); e == nil || !strings.Contains(e.Error(), "built-in key") {
+		t.Fatal("fork URL accepted with a foreign key", e)
+	}
+	// A removed built-in source stays removed after a restart.
+	if e := m.ChangeSource("fork", false, true); e != nil {
+		t.Fatal(e)
+	}
+	again, e := NewManager(m.dir, false, true)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer again.Ring.Close()
+	if s := again.sourceLocked("fork"); s == nil || !s.Removed || len(again.state.Sources) != 2 {
+		t.Fatal("removed built-in source came back", again.state.Sources)
 	}
 }
 func TestUnofficialSourceConsentAndProvenance(t *testing.T) {
@@ -80,7 +99,7 @@ func TestUnofficialSourceConsentAndProvenance(t *testing.T) {
 	if _, e = m.AddSource(context.Background(), f.Server.URL, "", "My source", false); e == nil {
 		t.Fatal("unofficial source added without consent")
 	}
-	if len(m.state.Sources) != 1 {
+	if len(m.state.Sources) != len(builtinSources) {
 		t.Fatal("failed consent changed source settings")
 	}
 	source, e := m.AddSource(context.Background(), f.Server.URL, preview.Key, "My source", true)
@@ -232,7 +251,7 @@ func TestLegacyCatalogMigrationAndPersistentConfig(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer loaded.Ring.Close()
-	if len(loaded.state.Sources) != 1 || loaded.state.Sources[0].URL != fixture.Server.URL+"/catalog/v1.json" {
+	if len(loaded.state.Sources) != 1+len(builtinSources) || loaded.state.Sources[0].URL != fixture.Server.URL+"/catalog/v1.json" {
 		t.Fatal("lost migrated source")
 	}
 	installed := loaded.state.Plugins[p.Manifest.ID]

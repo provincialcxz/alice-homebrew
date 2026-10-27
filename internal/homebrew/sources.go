@@ -16,6 +16,46 @@ import (
 const OfficialCatalogURL = "https://raw.githubusercontent.com/hertebeznat-cell/alice-homebrew/main/docs/catalog/v2.json"
 const OfficialCatalogKey = "bNgXwnJT9k5JhbY9QWfFRiTc/dgVlANhrJoTYAtNYAI="
 
+// This fork's own catalog sits next to the author's one with its own pinned key.
+const ForkCatalogURL = "https://raw.githubusercontent.com/provincialcxz/alice-homebrew/main/docs/catalog/v2.json"
+const ForkCatalogKey = "7go3MoIoHhA0NLJIOnpb83zdHxaTCWB6NjvGmTEmhfw="
+
+type builtinSource struct {
+	ID, Name, URL, Key string
+	// Aliases are other spellings of the same catalog that map onto URL.
+	Aliases []string
+}
+
+// Built-in sources are trusted without the unofficial-source warning, and a
+// built-in URL is never accepted with any key other than its pinned one.
+var builtinSources = []builtinSource{
+	{ID: "official", Name: "Alice Homebrew", URL: OfficialCatalogURL, Key: OfficialCatalogKey, Aliases: []string{strings.Replace(OfficialCatalogURL, "v2.json", "v1.json", 1), "https://hertebeznat-cell.github.io/alice-homebrew/catalog/v1.json", "https://hertebeznat-cell.github.io/alice-homebrew/catalog/v2.json"}},
+	{ID: "fork", Name: "Alice Homebrew · provincialcxz", URL: ForkCatalogURL, Key: ForkCatalogKey, Aliases: []string{strings.Replace(ForkCatalogURL, "v2.json", "v1.json", 1)}},
+}
+
+// builtinForURL returns the built-in catalog published at raw, whatever key
+// was supplied with it.
+func builtinForURL(raw string) *builtinSource {
+	for i := range builtinSources {
+		b := &builtinSources[i]
+		if raw == b.URL {
+			return b
+		}
+		for _, alias := range b.Aliases {
+			if raw == alias {
+				return b
+			}
+		}
+	}
+	return nil
+}
+func builtinFor(raw, key string) *builtinSource {
+	if b := builtinForURL(raw); b != nil && key == b.Key {
+		return b
+	}
+	return nil
+}
+
 type Source struct {
 	ID       string    `json:"id"`
 	Name     string    `json:"name"`
@@ -31,19 +71,11 @@ type Source struct {
 }
 
 func officialSource(raw, key string) bool {
-	return key == OfficialCatalogKey && officialURL(raw)
-}
-func officialURL(raw string) bool {
-	for _, u := range []string{OfficialCatalogURL, strings.Replace(OfficialCatalogURL, "v2.json", "v1.json", 1), "https://hertebeznat-cell.github.io/alice-homebrew/catalog/v1.json", "https://hertebeznat-cell.github.io/alice-homebrew/catalog/v2.json"} {
-		if raw == u {
-			return true
-		}
-	}
-	return false
+	return builtinFor(raw, key) != nil
 }
 func sourceID(raw, key string) string {
-	if officialSource(raw, key) {
-		return "official"
+	if b := builtinFor(raw, key); b != nil {
+		return b.ID
 	}
 	return Digest([]byte(raw + "\n" + key))[:24]
 }
@@ -86,8 +118,6 @@ func (m *Manager) initSources() error {
 					p.Previous.SourceID = m.state.Sources[0].ID
 				}
 			}
-		} else {
-			m.state.Sources = []Source{{ID: "official", Name: "Alice Homebrew", URL: OfficialCatalogURL, Key: OfficialCatalogKey, Official: true, Enabled: true}}
 		}
 	}
 	if len(m.state.Sources) > 32 {
@@ -105,9 +135,17 @@ func (m *Manager) initSources() error {
 		}
 		seen[s.ID] = true
 		s.Official = officialSource(s.URL, s.Key)
-		if s.Official {
-			s.Name = "Alice Homebrew"
-			s.URL = OfficialCatalogURL
+		if b := builtinFor(s.URL, s.Key); b != nil {
+			s.Name = b.Name
+			s.URL = b.URL
+		}
+	}
+	// New installations and upgrades get every built-in source once; a source
+	// the user removed stays as a Removed record and is not re-added.
+	for _, b := range builtinSources {
+		if !seen[b.ID] && len(m.state.Sources) < 32 {
+			m.state.Sources = append(m.state.Sources, Source{ID: b.ID, Name: b.Name, URL: b.URL, Key: b.Key, Official: true, Enabled: true})
+			seen[b.ID] = true
 		}
 	}
 	for _, p := range m.state.Plugins {
@@ -140,6 +178,9 @@ func (m *Manager) PreviewSource(ctx context.Context, raw, key, name string) (Sou
 	if e != nil {
 		return Source{}, nil, e
 	}
+	if b := builtinForURL(normalized); b != nil && key != "" && key != b.Key {
+		return Source{}, nil, errors.New("official source public key does not match the built-in key")
+	}
 	origin, e := m.storeURL(normalized)
 	if e != nil {
 		return Source{}, nil, e
@@ -162,10 +203,8 @@ func (m *Manager) PreviewSource(ctx context.Context, raw, key, name string) (Sou
 		}
 		key = envelope.PublicKey
 	}
-	if officialURL(normalized) {
-		if key != OfficialCatalogKey {
-			return Source{}, nil, errors.New("official source public key does not match the built-in key")
-		}
+	if b := builtinForURL(normalized); b != nil && key != b.Key {
+		return Source{}, nil, errors.New("official source public key does not match the built-in key")
 	}
 	c, e := VerifyCatalog(data, key, 0)
 	if e != nil {
@@ -192,8 +231,8 @@ func (m *Manager) PreviewSource(ctx context.Context, raw, key, name string) (Sou
 		return Source{}, nil, errors.New("source name must be 1 to 80 characters")
 	}
 	s := Source{ID: sourceID(normalized, key), Name: name, URL: normalized, Key: key, Official: officialSource(normalized, key), Enabled: true, Revision: c.Revision, Revoked: append([]string{}, c.Revoked...), Updated: time.Now()}
-	if s.Official {
-		s.Name = "Alice Homebrew"
+	if b := builtinFor(normalized, key); b != nil {
+		s.Name = b.Name
 	}
 	return s, &c, nil
 }
